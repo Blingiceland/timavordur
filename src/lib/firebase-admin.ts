@@ -35,7 +35,7 @@ function getAdminApp(): App {
     // Fallback
     console.warn("[FIREBASE ADMIN] Engin service account key fundin! Nota default credentials.");
     return initializeApp({
-        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "dillon-is",
+        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || "timavordur",
     });
 }
 
