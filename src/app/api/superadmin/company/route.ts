@@ -13,18 +13,27 @@ async function verifySuperAdmin(req: NextRequest) {
   } catch { return null; }
 }
 
-// PATCH /api/superadmin/company — add adminEmail to a company
+// PATCH /api/superadmin/company — add/remove adminEmail from a company
+// Auth: superadmin Firebase token OR setup secret
 export async function PATCH(req: NextRequest) {
-  const decoded = await verifySuperAdmin(req);
-  if (!decoded) return NextResponse.json({ error: "Ekki superadmin" }, { status: 403 });
+  const body = await req.json();
+  const { slug, addEmail, removEmail, secret } = body;
 
-  const { slug, addEmail, removEmail } = await req.json();
+  const SETUP_SECRET = process.env.SETUP_SECRET || "timavordur-setup-2024";
+  const hasSecret = secret === SETUP_SECRET;
+  const hasSuperAdmin = !hasSecret ? await verifySuperAdmin(req) : true;
+
+  if (!hasSecret && !hasSuperAdmin) {
+    return NextResponse.json({ error: "Ekki superadmin" }, { status: 403 });
+  }
+
   if (!slug) return NextResponse.json({ error: "Slug vantar" }, { status: 400 });
 
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).limit(1).get();
   if (snap.empty) return NextResponse.json({ error: "Fyrirtæki ekki fundið" }, { status: 404 });
 
   const docRef = snap.docs[0].ref;
+  const currentData = snap.docs[0].data();
 
   if (addEmail) {
     await docRef.update({ adminEmails: FieldValue.arrayUnion(addEmail) });
@@ -34,5 +43,9 @@ export async function PATCH(req: NextRequest) {
   }
 
   const updated = await docRef.get();
-  return NextResponse.json({ ok: true, adminEmails: updated.data()?.adminEmails });
+  return NextResponse.json({
+    ok: true,
+    adminEmails: updated.data()?.adminEmails,
+    previousAdminEmails: currentData.adminEmails,
+  });
 }
