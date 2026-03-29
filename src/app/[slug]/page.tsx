@@ -285,12 +285,14 @@ export default function CompanyPortal() {
   const staffAll = portal.staffList || [];
   const pendingStaff = staffAll.filter(s => s.status === "pending");
 
-  const tabs: { key: Tab; label: string; show: boolean }[] = [
-    { key: "clock", label: t.tabClock, show: true },
-    { key: "team", label: t.tabTeam, show: canSeeTeam },
-    { key: "staff", label: t.tabStaff, show: canManage },
-    { key: "settings", label: t.tabSettings, show: isOwner },
-  ].filter(t => t.show);
+  const tabs: { key: Tab; label: string }[] = (
+    [
+      { key: "clock" as Tab, label: t.tabClock, show: true },
+      { key: "team" as Tab, label: t.tabTeam, show: canSeeTeam },
+      { key: "staff" as Tab, label: t.tabStaff, show: canManage },
+      { key: "settings" as Tab, label: t.tabSettings, show: isOwner },
+    ] as { key: Tab; label: string; show: boolean }[]
+  ).filter(tb => tb.show).map(({ key, label }) => ({ key, label }));
 
   return (
     <div className="page" style={{ minHeight: "100vh" }}><Navbar />
