@@ -35,20 +35,37 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     const staffList = await Promise.all(staffSnap.docs.map(async (doc) => {
       const s = doc.data();
-      const lastPunch = await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords")
-        .where("uid", "==", doc.id).orderBy("timestamp", "desc").limit(1).get();
-      const isPunchedIn = !lastPunch.empty && lastPunch.docs[0].data().type === "in";
+      const staffStatus = s.status || "approved";
+      let isPunchedIn = false; let todayHours = 0;
 
-      const todayPunches = await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords")
-        .where("uid", "==", doc.id).where("timestamp", ">=", Timestamp.fromDate(todayStart)).orderBy("timestamp", "asc").get();
+      // Only query punch records for approved staff
+      if (staffStatus === "approved") {
+        const lastPunch = await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords")
+          .where("uid", "==", doc.id).orderBy("timestamp", "desc").limit(1).get();
+        isPunchedIn = !lastPunch.empty && lastPunch.docs[0].data().type === "in";
 
-      let todayHours = 0; let lastIn: Date | null = null;
-      for (const p of todayPunches.docs) {
-        const d = p.data(); const ts = d.timestamp.toDate();
-        if (d.type === "in") lastIn = ts;
-        else if (d.type === "out" && lastIn) { todayHours += (ts.getTime() - lastIn.getTime()) / 3600000; lastIn = null; }
+        const todayPunches = await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords")
+          .where("uid", "==", doc.id).where("timestamp", ">=", Timestamp.fromDate(todayStart)).orderBy("timestamp", "asc").get();
+
+        let lastIn: Date | null = null;
+        for (const p of todayPunches.docs) {
+          const d = p.data(); const ts = d.timestamp.toDate();
+          if (d.type === "in") lastIn = ts;
+          else if (d.type === "out" && lastIn) { todayHours += (ts.getTime() - lastIn.getTime()) / 3600000; lastIn = null; }
+        }
       }
-      return { uid: doc.id, name: s.name, email: s.email, isPunchedIn, todayHours };
+
+      return {
+        uid: doc.id, name: s.name, email: s.email,
+        status: staffStatus, isPunchedIn, todayHours,
+        ssn: s.ssn, phone: s.phone, address: s.address,
+        bankName: s.bankName, bankAccount: s.bankAccount,
+        union: s.union, pension: s.pension,
+        workPermit: s.workPermit, workPermitExpiry: s.workPermitExpiry,
+        jobTitle: s.jobTitle, employmentType: s.employmentType,
+        language: s.language, registeredSelf: s.registeredSelf,
+        addedAt: s.addedAt || s.registeredAt || "",
+      };
     }));
 
     return NextResponse.json({ companyName: company.name, isAdmin: true, staffList });

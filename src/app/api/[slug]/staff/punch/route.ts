@@ -23,7 +23,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     if (!companyId) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
     const staffDoc = await adminDb.collection("tv_companies").doc(companyId).collection("staff").doc(decoded.uid).get();
-    if (!staffDoc.exists) return NextResponse.json({ isRegistered: false, isPunchedIn: false, todayHours: 0, periodHours: 0, shifts: 0, name: decoded.name || "", companyName: slug });
+    const companyDoc = await adminDb.collection("tv_companies").doc(companyId).get();
+    const companyData = companyDoc.data() || {};
+    if (!staffDoc.exists) return NextResponse.json({ isRegistered: false, status: null, isPunchedIn: false, todayHours: 0, periodHours: 0, shifts: 0, name: decoded.name || "", companyName: companyData.name || slug, registrationFields: companyData.registrationFields || {} });
+    const staffData = staffDoc.data()!;
+    const staffStatus = staffData.status || "approved"; // legacy: no status = approved
+    if (staffStatus !== "approved") return NextResponse.json({ isRegistered: true, status: staffStatus, isPunchedIn: false, todayHours: 0, periodHours: 0, shifts: 0, name: staffData.name || "", companyName: companyData.name || slug });
 
     const lastPunchSnap = await adminDb.collection("tv_companies").doc(companyId).collection("punchRecords")
       .where("uid", "==", decoded.uid).orderBy("timestamp", "desc").limit(1).get();
@@ -55,7 +60,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       else if (d.type === "out" && pLastIn) { periodHours += (ts.getTime() - pLastIn.getTime()) / 3600000; pLastIn = null; }
     }
 
-    return NextResponse.json({ isRegistered: true, isPunchedIn, todayHours, periodHours, shifts, name: staffDoc.data()?.name || decoded.name || "", companyName: slug });
+    return NextResponse.json({ isRegistered: true, status: "approved", isPunchedIn, todayHours, periodHours, shifts, name: staffData.name || decoded.name || "", companyName: companyData.name || slug });
   } catch (err) {
     console.error("[punch GET]", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
@@ -73,6 +78,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     const staffDoc = await adminDb.collection("tv_companies").doc(companyId).collection("staff").doc(decoded.uid).get();
     if (!staffDoc.exists) return NextResponse.json({ error: "Ekki skráð/ur" }, { status: 403 });
+    const staffStatus = staffDoc.data()?.status || "approved";
+    if (staffStatus === "pending") return NextResponse.json({ error: "pending" }, { status: 403 });
+    if (staffStatus === "rejected") return NextResponse.json({ error: "rejected" }, { status: 403 });
+
+    // IP restriction check
+    const companyDoc = await adminDb.collection("tv_companies").doc(companyId).get();
+    const ipRestriction = companyDoc.data()?.ipRestriction;
+    if (ipRestriction?.enabled && ipRestriction.allowedIPs?.length > 0) {
+      const clientIP = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "";
+      const allowed = ipRestriction.allowedIPs.some((ip: string) => clientIP.startsWith(ip.split("/")[0].split(".").slice(0, 3).join(".")));
+      if (!allowed) return NextResponse.json({ error: "ip_restricted", clientIP }, { status: 403 });
+    }
 
     const lastSnap = await adminDb.collection("tv_companies").doc(companyId).collection("punchRecords")
       .where("uid", "==", decoded.uid).orderBy("timestamp", "desc").limit(1).get();

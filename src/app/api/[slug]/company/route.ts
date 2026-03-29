@@ -16,7 +16,13 @@ export async function GET(
 
     if (snap.empty) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const data = snap.docs[0].data();
-    return NextResponse.json({ id: snap.docs[0].id, name: data.name, slug: data.slug });
+    return NextResponse.json({
+      id: snap.docs[0].id,
+      name: data.name,
+      slug: data.slug,
+      registrationFields: data.registrationFields || {},
+      requireApproval: data.requireApproval !== false,
+    });
   } catch (err) {
     console.error("[company GET]", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
