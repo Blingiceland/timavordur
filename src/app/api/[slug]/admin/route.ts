@@ -24,7 +24,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     if (!(company.adminEmails || []).includes(decoded.email || "")) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json({
+        error: "Forbidden",
+        debug: { tokenEmail: decoded.email, adminEmails: company.adminEmails }
+      }, { status: 403 });
     }
 
     const staffSnap = await adminDb.collection("tv_companies").doc(company.id).collection("staff").get();
