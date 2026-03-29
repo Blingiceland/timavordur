@@ -191,9 +191,14 @@ export default function CompanyPortal() {
           {portal?.role && portal.role !== "staff" && <span className="badge" style={{ marginLeft: "8px", fontSize: "0.7rem", background: "rgba(255,255,255,0.08)", color: roleColor(portal.role) }}>{roleLabel(portal.role, lang)}</span>}
         </div>
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <button className="btn btn--ghost btn--sm" style={{ fontSize: "1.1rem", padding: "4px 8px" }} onClick={() => { setLang(null); localStorage.removeItem(`tv_lang_${slug}`); }}>
-            {lang === "is" ? "🇮🇸" : "🇬🇧"}
-          </button>
+          <div style={{ display: "flex", gap: "2px", alignItems: "center", background: "var(--bg-surface)", borderRadius: "var(--radius-md)", padding: "3px" }}>
+            {([["is", "🇮🇸"], ["en", "🇬🇧"]] as const).map(([code, flag]) => (
+              <button key={code} onClick={() => chooseLang(code)}
+                style={{ fontSize: "1.2rem", padding: "3px 7px", borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", background: lang === code ? "var(--bg-card)" : "transparent", opacity: lang === code ? 1 : 0.35, transition: "all 0.2s", lineHeight: 1 }}>
+                {flag}
+              </button>
+            ))}
+          </div>
           <button className="btn btn--ghost btn--sm" style={{ fontSize: "1.1rem", padding: "4px 8px" }} onClick={toggleTheme} title={theme === "dark" ? "Ljóst þema" : "Dökkt þema"}>
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
