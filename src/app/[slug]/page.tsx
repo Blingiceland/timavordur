@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { auth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
+import { useTheme } from "@/lib/theme";
 
 type Role = "staff" | "manager" | "admin" | "owner";
 type Status = "pending" | "approved" | "rejected";
@@ -72,6 +73,7 @@ export default function CompanyPortal() {
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [portalError, setPortalError] = useState("");
+  const { theme, toggle: toggleTheme } = useTheme();
 
   const t = T[lang || "is"];
 
@@ -191,6 +193,9 @@ export default function CompanyPortal() {
         <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
           <button className="btn btn--ghost btn--sm" style={{ fontSize: "1.1rem", padding: "4px 8px" }} onClick={() => { setLang(null); localStorage.removeItem(`tv_lang_${slug}`); }}>
             {lang === "is" ? "🇮🇸" : "🇬🇧"}
+          </button>
+          <button className="btn btn--ghost btn--sm" style={{ fontSize: "1.1rem", padding: "4px 8px" }} onClick={toggleTheme} title={theme === "dark" ? "Ljóst þema" : "Dökkt þema"}>
+            {theme === "dark" ? "☀️" : "🌙"}
           </button>
           {user && <button className="btn btn--ghost btn--sm" onClick={() => signOut(auth)}>{t.signOut}</button>}
         </div>
