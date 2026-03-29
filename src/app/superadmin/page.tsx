@@ -23,6 +23,10 @@ export default function SuperAdminPage() {
   const [newForm, setNewForm] = useState({ name: "", slug: "", adminEmail: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [editCompany, setEditCompany] = useState<Company | null>(null);
+  const [editAdminEmail, setEditAdminEmail] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
 
   // Auth guard
   useEffect(() => {
@@ -44,6 +48,57 @@ export default function SuperAdminPage() {
     await signOut(auth);
     sessionStorage.removeItem("superadmin");
     router.push("/superadmin/login");
+  };
+
+  const handleAddAdmin = async (slug: string, email: string) => {
+    if (!email || !superAdmin) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const res = await fetch("/api/superadmin/company", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${superAdmin.token}`,
+        },
+        body: JSON.stringify({ slug, addEmail: email }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setEditError(data.error || "Villa"); return; }
+      setCompanies((prev) =>
+        prev.map((c) =>
+          c.slug === slug ? { ...c, adminEmails: data.adminEmails } : c
+        )
+      );
+      setEditCompany((prev) => prev ? { ...prev, adminEmails: data.adminEmails } : null);
+      setEditAdminEmail("");
+    } catch { setEditError("Netvillla"); }
+    finally { setEditSaving(false); }
+  };
+
+  const handleRemoveAdmin = async (slug: string, email: string) => {
+    if (!superAdmin) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const res = await fetch("/api/superadmin/company", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${superAdmin.token}`,
+        },
+        body: JSON.stringify({ slug, removEmail: email }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setEditError(data.error || "Villa"); return; }
+      setCompanies((prev) =>
+        prev.map((c) =>
+          c.slug === slug ? { ...c, adminEmails: data.adminEmails } : c
+        )
+      );
+      setEditCompany((prev) => prev ? { ...prev, adminEmails: data.adminEmails } : null);
+    } catch { setEditError("Netvillla"); }
+    finally { setEditSaving(false); }
   };
 
   const fetchCompanies = useCallback(async () => {
@@ -282,12 +337,8 @@ export default function SuperAdminPage() {
                     </td>
                     <td>
                       <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                        <a href={`/${c.slug}/staff`} className="text-brand" style={{ fontSize: "0.82rem" }}>
-                          /{c.slug}/staff ↗
-                        </a>
-                        <a href={`/${c.slug}/admin`} className="text-secondary" style={{ fontSize: "0.82rem" }}>
-                          /{c.slug}/admin ↗
-                        </a>
+                        <span className="text-brand" style={{ fontSize: "0.82rem" }}>/{c.slug}/staff</span>
+                        <span className="text-secondary" style={{ fontSize: "0.82rem" }}>/{c.slug}/admin</span>
                       </div>
                     </td>
                     <td style={{ fontSize: "0.85rem" }}>{c.adminEmails?.[0] || "—"}</td>
@@ -303,9 +354,12 @@ export default function SuperAdminPage() {
                       </span>
                     </td>
                     <td>
-                      <a href={`/${c.slug}/admin`} className="btn btn--secondary btn--sm">
-                        Skoða
-                      </a>
+                      <button
+                        className="btn btn--secondary btn--sm"
+                        onClick={() => { setEditCompany(c); setEditAdminEmail(""); setEditError(""); }}
+                      >
+                        Breyta
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -314,6 +368,83 @@ export default function SuperAdminPage() {
           )}
         </div>
       </div>
+
+      {/* Edit Company Modal */}
+      {editCompany && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 1000, padding: "24px",
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget) setEditCompany(null); }}
+        >
+          <div className="card" style={{ maxWidth: "500px", width: "100%", padding: "32px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
+              <div>
+                <h2 style={{ fontSize: "1.2rem", marginBottom: "2px" }}>{editCompany.name}</h2>
+                <span className="text-secondary" style={{ fontSize: "0.82rem" }}>/{editCompany.slug}</span>
+              </div>
+              <button className="btn btn--ghost btn--sm" onClick={() => setEditCompany(null)}>✕</button>
+            </div>
+
+            {editError && (
+              <div style={{ background: "rgba(255,77,106,0.1)", border: "1px solid rgba(255,77,106,0.3)", borderRadius: "var(--radius-md)", padding: "10px 14px", color: "var(--danger)", marginBottom: "16px", fontSize: "0.85rem" }}>
+                ⚠️ {editError}
+              </div>
+            )}
+
+            <div style={{ marginBottom: "20px" }}>
+              <label className="form-label" style={{ marginBottom: "10px", display: "block" }}>Admin netföng</label>
+              {editCompany.adminEmails?.length ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "12px" }}>
+                  {editCompany.adminEmails.map((email) => (
+                    <div key={email} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-surface)", borderRadius: "var(--radius-md)", padding: "8px 12px" }}>
+                      <span style={{ fontSize: "0.88rem" }}>{email}</span>
+                      <button
+                        className="btn btn--ghost btn--sm"
+                        style={{ color: "var(--danger)", fontSize: "0.8rem" }}
+                        onClick={() => handleRemoveAdmin(editCompany.slug, email)}
+                        disabled={editSaving}
+                      >
+                        Eyða
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-muted" style={{ fontSize: "0.85rem", marginBottom: "12px" }}>Enginn admin skráður</p>
+              )}
+
+              <div style={{ display: "flex", gap: "8px" }}>
+                <input
+                  className="form-input"
+                  type="email"
+                  placeholder="nyradmin@fyrirtaeki.is"
+                  value={editAdminEmail}
+                  onChange={(e) => setEditAdminEmail(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddAdmin(editCompany.slug, editAdminEmail); } }}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn btn--primary btn--sm"
+                  onClick={() => handleAddAdmin(editCompany.slug, editAdminEmail)}
+                  disabled={editSaving || !editAdminEmail}
+                >
+                  {editSaving ? "..." : "Bæta við"}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ borderTop: "1px solid var(--border)", paddingTop: "16px", display: "flex", gap: "8px" }}>
+              <div style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
+                <div>🔗 Staff: <strong>timavordur.vercel.app/{editCompany.slug}/staff</strong></div>
+                <div>🔐 Admin: <strong>timavordur.vercel.app/{editCompany.slug}/admin</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
