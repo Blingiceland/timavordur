@@ -71,6 +71,7 @@ export default function CompanyPortal() {
   const [regFields, setRegFields] = useState<Record<string, FieldLevel>>(REG_FIELDS_DEFAULTS);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [portalError, setPortalError] = useState("");
 
   const t = T[lang || "is"];
 
@@ -94,8 +95,11 @@ export default function CompanyPortal() {
         setPortal(d);
         if (d.registrationFields) setRegFields({ ...REG_FIELDS_DEFAULTS, ...d.registrationFields });
         if (!d.registered) setRegForm(f => ({ ...f, name: user.displayName || "" }));
+      } else {
+        console.error("[portal GET error]", res.status, d);
+        setPortalError(d.error || `Villa ${res.status}`);
       }
-    } catch { /* ignore */ } finally { setPortalLoading(false); }
+    } catch (e) { console.error("[portal fetch crash]", e); setPortalError("Netvillla — reyndu aftur"); } finally { setPortalLoading(false); }
   }, [user, slug]);
 
   useEffect(() => { if (user) fetchPortal(); }, [user, fetchPortal]);
@@ -275,7 +279,24 @@ export default function CompanyPortal() {
   }
 
   // ─── Main portal ───────────────────────────────────────────────────────────
-  if (!portal?.role) return null;
+  if (!portal?.role) return (
+    <div className="page" style={{ minHeight: "100vh" }}><Navbar />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "calc(100vh - 64px)" }}>
+        <div className="card" style={{ maxWidth: "420px", width: "100%", padding: "40px", textAlign: "center" }}>
+          {portalError ? (
+            <>
+              <div style={{ fontSize: "2.5rem", marginBottom: "12px" }}>⚠️</div>
+              <h2 style={{ fontSize: "1.1rem", marginBottom: "8px", color: "var(--danger)" }}>Villa</h2>
+              <p className="text-secondary" style={{ fontSize: "0.88rem", marginBottom: "20px" }}>{portalError}</p>
+              <button className="btn btn--primary" onClick={fetchPortal}>Reyna aftur</button>
+            </>
+          ) : (
+            <div className="text-muted">{t.loading}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
   const role = portal.role;
   const canSeeTeam = atLeast(role, "manager");
   const canManage = atLeast(role, "admin");
