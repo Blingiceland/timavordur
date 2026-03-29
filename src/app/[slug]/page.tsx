@@ -190,17 +190,23 @@ export default function CompanyPortal() {
           {portal?.companyName && <span className="text-secondary" style={{ fontFamily: "var(--font-body)", fontWeight: 400, fontSize: "0.9rem", marginLeft: "8px" }}>· {portal.companyName}</span>}
           {portal?.role && portal.role !== "staff" && <span className="badge" style={{ marginLeft: "8px", fontSize: "0.7rem", background: "rgba(255,255,255,0.08)", color: roleColor(portal.role) }}>{roleLabel(portal.role, lang)}</span>}
         </div>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          <div style={{ display: "flex", gap: "2px", alignItems: "center", background: "var(--bg-surface)", borderRadius: "var(--radius-md)", padding: "3px" }}>
-            {([["is", "🇮🇸"], ["en", "🇬🇧"]] as const).map(([code, flag]) => (
+        <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+          {/* Language flags */}
+          <div style={{ display: "flex", gap: "2px", alignItems: "center", background: "var(--bg-surface)", borderRadius: "var(--radius-md)", padding: "3px", border: "1px solid var(--border)" }}>
+            {(([["is", "🇮🇸"], ["en", "🇬🇧"]] as const)).map(([code, flag]) => (
               <button key={code} onClick={() => chooseLang(code)}
-                style={{ fontSize: "1.2rem", padding: "3px 7px", borderRadius: "var(--radius-sm)", border: "none", cursor: "pointer", background: lang === code ? "var(--bg-card)" : "transparent", opacity: lang === code ? 1 : 0.35, transition: "all 0.2s", lineHeight: 1 }}>
+                style={{ fontSize: "1.25rem", padding: "3px 8px", borderRadius: "var(--radius-sm)", border: lang === code ? "1px solid var(--brand)" : "1px solid transparent", cursor: "pointer", background: lang === code ? "var(--brand-glow)" : "transparent", opacity: lang === code ? 1 : 0.55, transition: "all 0.2s", lineHeight: 1 }}>
                 {flag}
               </button>
             ))}
           </div>
-          <button className="btn btn--ghost btn--sm" style={{ fontSize: "1.1rem", padding: "4px 8px" }} onClick={toggleTheme} title={theme === "dark" ? "Ljóst þema" : "Dökkt þema"}>
-            {theme === "dark" ? "☀️" : "🌙"}
+          {/* Theme toggle */}
+          <button onClick={toggleTheme}
+            style={{ display: "flex", alignItems: "center", gap: "5px", padding: "5px 10px", borderRadius: "var(--radius-md)", border: "1px solid var(--border)", background: "var(--bg-surface)", cursor: "pointer", fontSize: "0.78rem", color: "var(--text-secondary)", transition: "all 0.2s" }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--brand)"; e.currentTarget.style.color = "var(--text-primary)"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-secondary)"; }}>
+            <span style={{ fontSize: "0.95rem" }}>{theme === "dark" ? "☀️" : "🌙"}</span>
+            <span style={{ fontFamily: "var(--font-body)", fontWeight: 500 }}>{lang === "en" ? (theme === "dark" ? "Light" : "Dark") : (theme === "dark" ? "Ljóst" : "Dökkt")}</span>
           </button>
           {user && <button className="btn btn--ghost btn--sm" onClick={() => signOut(auth)}>{t.signOut}</button>}
         </div>
