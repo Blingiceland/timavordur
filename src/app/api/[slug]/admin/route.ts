@@ -55,16 +55,26 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
         }
       }
 
+      // Safely convert Timestamp or string to ISO string
+      const toStr = (val: unknown): string => {
+        if (!val) return "";
+        if (typeof val === "string") return val;
+        if (typeof val === "object" && val !== null && "toDate" in val && typeof (val as { toDate: () => Date }).toDate === "function") {
+          return (val as { toDate: () => Date }).toDate().toISOString();
+        }
+        return String(val);
+      };
+
       return {
         uid: doc.id, name: s.name, email: s.email,
         status: staffStatus, isPunchedIn, todayHours,
-        ssn: s.ssn, phone: s.phone, address: s.address,
-        bankName: s.bankName, bankAccount: s.bankAccount,
-        union: s.union, pension: s.pension,
-        workPermit: s.workPermit, workPermitExpiry: s.workPermitExpiry,
-        jobTitle: s.jobTitle, employmentType: s.employmentType,
-        language: s.language, registeredSelf: s.registeredSelf,
-        addedAt: s.addedAt || s.registeredAt || "",
+        ssn: s.ssn || "", phone: s.phone || "", address: s.address || "",
+        bankName: s.bankName || "", bankAccount: s.bankAccount || "",
+        union: s.union || "", pension: s.pension || "",
+        workPermit: s.workPermit ?? null, workPermitExpiry: s.workPermitExpiry || "",
+        jobTitle: s.jobTitle || "", employmentType: s.employmentType || "",
+        language: s.language || "is", registeredSelf: s.registeredSelf ?? false,
+        addedAt: toStr(s.addedAt || s.registeredAt),
       };
     }));
 
