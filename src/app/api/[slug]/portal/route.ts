@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { calculateWage } from "@/lib/wage-calculator";
 
 // ── Role system ────────────────────────────────────────────────────────────
 export type Role = "staff" | "manager" | "admin" | "owner";
@@ -155,13 +156,34 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     const isPunchedIn = !lastSnap.empty && lastSnap.docs[0].data().type === "in";
     const newType = isPunchedIn ? "out" : "in";
     const now = new Date();
-
-    await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").add({
+    const newRecordData: Record<string, unknown> = {
       uid: decoded.uid, name: s.name || decoded.name || decoded.email || "Unknown",
       email: decoded.email || "", type: newType, timestamp: FieldValue.serverTimestamp(),
       date: now.toISOString().slice(0, 10),
       displayTime: now.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" }),
-    });
+    };
+
+    // On punch-out: calculate wage breakdown for this shift
+    if (newType === "out" && !lastSnap.empty) {
+      const lastInData = lastSnap.docs[0].data();
+      const punchInTime = lastInData.timestamp?.toDate?.() as Date | undefined;
+      if (punchInTime) {
+        const hourlyRate = s.hourlyRate || 0;
+        const agreement = (s.collectiveAgreement || "efling_sa") as "efling_sa" | "custom";
+        const wage = calculateWage(punchInTime, now, hourlyRate, agreement);
+        newRecordData.wageData = {
+          totalHours: wage.totalHours,
+          totalWage: wage.totalWage,
+          effectiveMultiplier: Math.round(wage.effectiveMultiplier * 100) / 100,
+          breakdown: wage.breakdown,
+          wageBreakdown: wage.wageBreakdown,
+          hourlyRate,
+          agreement,
+        };
+      }
+    }
+
+    await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").add(newRecordData);
 
     return NextResponse.json({ type: newType, time: now.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" }) });
   } catch (err) {
