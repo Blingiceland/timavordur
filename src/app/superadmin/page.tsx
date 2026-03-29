@@ -1,15 +1,50 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { signOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import type { Company } from "@/app/api/companies/route";
 
+interface SuperAdminUser {
+  uid: string;
+  email: string;
+  name: string;
+  token: string;
+}
+
 export default function SuperAdminPage() {
+  const router = useRouter();
+  const [superAdmin, setSuperAdmin] = useState<SuperAdminUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
   const [newForm, setNewForm] = useState({ name: "", slug: "", adminEmail: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // Auth guard
+  useEffect(() => {
+    const stored = sessionStorage.getItem("superadmin");
+    if (!stored) {
+      router.replace("/superadmin/login");
+      return;
+    }
+    try {
+      setSuperAdmin(JSON.parse(stored));
+    } catch {
+      router.replace("/superadmin/login");
+      return;
+    }
+    setAuthChecked(true);
+  }, [router]);
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    sessionStorage.removeItem("superadmin");
+    router.push("/superadmin/login");
+  };
 
   const fetchCompanies = useCallback(async () => {
     setLoading(true);
@@ -25,8 +60,9 @@ export default function SuperAdminPage() {
   }, []);
 
   useEffect(() => {
-    fetchCompanies();
-  }, [fetchCompanies]);
+    if (authChecked) fetchCompanies();
+  }, [authChecked, fetchCompanies]);
+
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +103,15 @@ export default function SuperAdminPage() {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-|-$/g, "");
 
+  // Show nothing while checking auth (avoid flash)
+  if (!authChecked) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-base)" }}>
+        <p className="text-secondary">Sannreyni aðgang...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="page" style={{ minHeight: "100vh" }}>
       {/* Navbar */}
@@ -78,9 +123,17 @@ export default function SuperAdminPage() {
               SUPERADMIN
             </span>
           </div>
-          <a href="/" className="btn btn--ghost btn--sm">← Forsíða</a>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+              {superAdmin?.name || superAdmin?.email}
+            </span>
+            <button className="btn btn--ghost btn--sm" onClick={handleLogout}>
+              Útskrá
+            </button>
+          </div>
         </div>
       </nav>
+
 
       <div className="container" style={{ padding: "48px 24px" }}>
         {/* Header */}
