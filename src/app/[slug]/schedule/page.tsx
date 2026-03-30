@@ -59,32 +59,40 @@ function fmtWeekRange(s: Date, lang: Lang) {
 }
 
 // Build 24h time options at 15-min intervals (00:00 → 23:45)
-const TIME_OPTIONS: string[] = [];
+const TIME_OPTIONS: { value: string; label: string }[] = [];
 for (let h = 0; h < 24; h++) {
   for (const m of [0, 15, 30, 45]) {
-    TIME_OPTIONS.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+    const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    TIME_OPTIONS.push({ value: t, label: t });
   }
 }
-// End-time options: 00:00→23:45 + 00:00→06:00 next day (stored as plain HH:MM, backend detects cross-midnight)
+// End-time options: same 00:00-23:45 PLUS next-day 00:00-07:00
+// Internal values use 24-31 to avoid duplicate keys; normalised to HH:MM before saving
 const END_TIME_OPTIONS: { value: string; label: string }[] = [
-  ...TIME_OPTIONS.map(v => ({ value: v, label: v })),
-  ...[...Array(7)].flatMap((_, h) =>
-    [0, 15, 30, 45].map(m => ({ value: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`, label: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} (+1)` }))
+  ...TIME_OPTIONS,
+  ...[...Array(8)].flatMap((_, h) =>
+    [0, 15, 30, 45].map(m => ({
+      value: `${String(h + 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`, // "24:00" .. "31:45"
+      label:  `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")} (+1)`,
+    }))
   ),
 ];
+/** Convert "24:15" → "00:15" etc. before sending to API */
+function normalizeTime(v: string): string {
+  const [h, m] = v.split(":").map(Number);
+  return `${String(h % 24).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
 
 function Time24Select({ value, onChange, endTime }: { value: string; onChange: (v: string) => void; endTime?: boolean }) {
-  const opts = endTime ? END_TIME_OPTIONS : TIME_OPTIONS.map(v => ({ value: v, label: v }));
-  const snapped = opts.find(o => o.value === value) ? value : opts.reduce((best, o) => {
-    const toMins = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-    return Math.abs(toMins(o.value) - toMins(value)) < Math.abs(toMins(best) - toMins(value)) ? o.value : best;
-  }, opts[0].value);
+  const opts = endTime ? END_TIME_OPTIONS : TIME_OPTIONS;
   return (
-    <select className="form-input" style={{ fontFamily: "monospace" }} value={snapped} onChange={e => onChange(e.target.value)}>
-      {opts.map((o, i) => <option key={`${o.value}-${i}`} value={o.value}>{o.label}</option>)}
+    <select className="form-input" style={{ fontFamily: "monospace" }} value={value}
+      onChange={e => onChange(e.target.value)}>
+      {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   );
 }
+
 
 
 interface Shift {
@@ -184,9 +192,9 @@ export default function SchedulePage() {
       const day = weekDays[modal.dayIndex];
       const dow = day.getUTCDay();
       if (mType === "recurring") {
-        await fetch(`/api/${slug}/shift-templates`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ uid: mUid, daysOfWeek: [dow], startTime: mFrom, endTime: mTo, label: mNote }) });
+        await fetch(`/api/${slug}/shift-templates`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ uid: mUid, daysOfWeek: [dow], startTime: mFrom, endTime: normalizeTime(mTo), label: mNote }) });
       } else {
-        await fetch(`/api/${slug}/schedule`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ uid: mUid, date: modal.date, startTime: mFrom, endTime: mTo, notes: mNote }) });
+        await fetch(`/api/${slug}/schedule`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ uid: mUid, date: modal.date, startTime: mFrom, endTime: normalizeTime(mTo), notes: mNote }) });
       }
       closeModal(); reload();
     } finally { setSaving(false); }
