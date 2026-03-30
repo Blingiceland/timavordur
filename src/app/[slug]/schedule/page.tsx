@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { auth } from "@/lib/firebase";
@@ -126,48 +126,56 @@ export default function SchedulePage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const isManager = ["manager", "admin", "owner"].includes(myRole);
-  const weekEnd = addDays(weekStart, 6);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+  const [reloadKey, setReloadKey] = useState(0);
+  const reload = () => setReloadKey(k => k + 1);
+
+  const col = (uid: string) => STAFF_COLORS[uidToColorIdx.get(uid) ?? 0];
 
   useEffect(() => { return onAuthStateChanged(auth, setUser); }, []);
 
+  // Load portal data (role + staff list) once on auth
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     user.getIdToken().then(async tok => {
       const r = await fetch(`/api/${slug}/portal`, { headers: { Authorization: `Bearer ${tok}` } });
-      if (r.ok) {
-        const d = await r.json();
-        setMyRole(d.role || "");
-        const approved = (d.staffList || []).filter((s: StaffMember) => s.status === "approved");
-        setStaffList(approved);
-        const m = new Map<string, number>();
-        approved.forEach((s: StaffMember, i: number) => m.set(s.uid, i % STAFF_COLORS.length));
-        setUidToColorIdx(m);
-        if (approved.length > 0) setPendingUid(approved[0].uid);
-      }
+      if (cancelled || !r.ok) return;
+      const d = await r.json();
+      setMyRole(d.role || "");
+      const approved = (d.staffList || []).filter((s: StaffMember) => s.status === "approved");
+      setStaffList(approved);
+      const m = new Map<string, number>();
+      approved.forEach((s: StaffMember, i: number) => m.set(s.uid, i % STAFF_COLORS.length));
+      setUidToColorIdx(m);
+      if (approved.length > 0) setPendingUid(prev => prev || approved[0].uid);
     });
+    return () => { cancelled = true; };
   }, [user, slug]);
 
-  const col = useCallback((uid: string) => STAFF_COLORS[uidToColorIdx.get(uid) ?? 0], [uidToColorIdx]);
-
-  const fetchShifts = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    try {
-      const tok = await user.getIdToken();
-      const r = await fetch(`/api/${slug}/schedule?from=${toYMD(weekStart)}&to=${toYMD(weekEnd)}`, { headers: { Authorization: `Bearer ${tok}` } });
-      if (r.ok) { const d = await r.json(); setShifts(d.shifts || []); }
-    } finally { setLoading(false); }
-  }, [user, slug, weekStart, weekEnd]);
-
-  const fetchTemplates = useCallback(async () => {
-    if (!user || !isManager) return;
-    const tok = await user.getIdToken();
-    const r = await fetch(`/api/${slug}/shift-templates`, { headers: { Authorization: `Bearer ${tok}` } });
-    if (r.ok) { const d = await r.json(); setTemplates(d.templates || []); }
-  }, [user, slug, isManager]);
-
-  useEffect(() => { if (user && myRole) { fetchShifts(); fetchTemplates(); } }, [user, myRole, fetchShifts, fetchTemplates]);
+  // Load shifts + templates whenever week or reloadKey changes
+  useEffect(() => {
+    if (!user || !myRole) return;
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const tok = await user.getIdToken();
+        const from = toYMD(weekStart);
+        const to = toYMD(addDays(weekStart, 6));
+        const isMgr = ["manager", "admin", "owner"].includes(myRole);
+        const [sRes, tRes] = await Promise.all([
+          fetch(`/api/${slug}/schedule?from=${from}&to=${to}`, { headers: { Authorization: `Bearer ${tok}` } }),
+          isMgr ? fetch(`/api/${slug}/shift-templates`, { headers: { Authorization: `Bearer ${tok}` } }) : Promise.resolve(null),
+        ]);
+        if (cancelled) return;
+        if (sRes.ok) { const d = await sRes.json(); setShifts(d.shifts || []); }
+        if (tRes?.ok) { const d = await tRes.json(); setTemplates(d.templates || []); }
+      } finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [user, slug, weekStart, myRole, reloadKey]); // stable deps — no callbacks
 
   // ── Drag handlers ─────────────────────────────────────────────────────────
   const getCellFromEvent = (e: React.MouseEvent, dayIndex: number) => {
@@ -222,7 +230,6 @@ export default function SchedulePage() {
           method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
           body: JSON.stringify({ uid: pendingUid, daysOfWeek: [dow], startTime, endTime, label: pendingLabel }),
         });
-        fetchTemplates();
       } else {
         await fetch(`/api/${slug}/schedule`, {
           method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" },
@@ -230,7 +237,7 @@ export default function SchedulePage() {
         });
       }
       cancelPending();
-      fetchShifts();
+      reload();
     } finally { setSaving(false); }
   };
 
@@ -243,11 +250,10 @@ export default function SchedulePage() {
       const tok = await user.getIdToken();
       if (isTemplate && sh.templateId) {
         await fetch(`/api/${slug}/shift-templates`, { method: "DELETE", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ templateId: sh.templateId }) });
-        fetchTemplates();
       } else {
         await fetch(`/api/${slug}/schedule`, { method: "DELETE", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ shiftId: sh.id }) });
       }
-      fetchShifts();
+      reload();
     } finally { setDeletingId(null); }
   };
 
@@ -310,7 +316,7 @@ export default function SchedulePage() {
                         if (!user || !confirm(t.confirmDelTmpl)) return;
                         const tok = await user.getIdToken();
                         await fetch(`/api/${slug}/shift-templates`, { method: "DELETE", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ templateId: tmpl.id }) });
-                        fetchTemplates(); fetchShifts();
+                        reload();
                       }} style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--danger)", fontSize: "0.8rem", padding: "0 2px" }}>✕</button>
                     </div>
                   );

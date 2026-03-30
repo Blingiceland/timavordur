@@ -25,8 +25,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
     if (!meDoc.exists) return NextResponse.json({ error: "not_registered" }, { status: 403 });
     const snap = await adminDb.collection("tv_companies").doc(company.id).collection("shiftTemplates")
-      .where("active", "==", true).orderBy("name", "asc").get();
-    const templates = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      .where("active", "==", true).get();
+    const templates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => String((a as Record<string,unknown>).name || "").localeCompare(String((b as Record<string,unknown>).name || "")));
     return NextResponse.json({ templates });
   } catch (err) { console.error(err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
 }
