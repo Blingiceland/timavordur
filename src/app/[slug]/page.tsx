@@ -381,7 +381,10 @@ export default function CompanyPortal() {
                 <div key={l} style={{ textAlign: "center" }}><div style={{ fontSize: "1.8rem", color: c, fontWeight: 700 }}>{v}</div><div className="text-muted" style={{ fontSize: "0.82rem" }}>{l}</div></div>
               ))}
             </div>
-            <a href={`/${slug}/staff/timesheets`} className="btn btn--secondary btn--sm">{lang === "is" ? "Tímaskráningar" : "Timesheets"}</a>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+              <a href={`/${slug}/timesheets`} className="btn btn--secondary btn--sm">📊 {lang === "is" ? "Tímaskýrslur" : "Timesheets"}</a>
+              {canSeeTeam && <a href={`/${slug}/schedule`} className="btn btn--secondary btn--sm">🗓 {lang === "is" ? "Vaktaplan" : "Schedule"}</a>}
+            </div>
           </div>
         )}
 
