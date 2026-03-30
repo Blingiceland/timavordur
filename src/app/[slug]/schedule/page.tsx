@@ -109,7 +109,7 @@ export default function SchedulePage() {
   const [uidToColorIdx, setUidToColorIdx] = useState<Map<string, number>>(new Map());
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [weekStart, setWeekStart] = useState(() => getWeekStart(new Date()));
   const [showTemplates, setShowTemplates] = useState(false);
 
