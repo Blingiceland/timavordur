@@ -153,14 +153,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       else if (payType === "monthly") bruttoWage = monthlyRate;
       else bruttoWage = monthlyRate || shifts.reduce((s, x) => s + x.wage, 0);
 
-      const employerCost = calculateEmployerCost(bruttoWage, EMPLOYER_PENSION, SOCIAL_TAX);
+      const orlofsRate = (staff.orlofsRate as number) || 0.1017;
+      const cost = calculateEmployerCost(bruttoWage, EMPLOYER_PENSION, SOCIAL_TAX, orlofsRate);
 
       return {
         uid, name: staff.name as string, email: staff.email as string,
         payType, hourlyRate, monthlyRate, agreement,
         totalHours: Math.round(totalHours * 100) / 100,
         bruttoWage: Math.round(bruttoWage),
-        employerCost: Math.round(employerCost),
+        employerCost: cost.total,
+        costBreakdown: {
+          brutto: cost.brutto,
+          orlof: cost.orlof,
+          orlofsRate: cost.orlofsRate,
+          gjaldskyldBase: cost.gjaldskyldBase,
+          employerPension: cost.employerPension,
+          socialTax: cost.socialTax,
+          total: cost.total,
+        },
         shifts: shifts.map(s => ({
           date: s.date,
           inTime: s.inTime.toISOString(),
@@ -171,6 +181,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
           open: s.open,
         })),
       };
+
     }));
 
     const validSummaries = summaries.filter(Boolean);

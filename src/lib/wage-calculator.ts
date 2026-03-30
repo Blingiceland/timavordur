@@ -182,12 +182,46 @@ export function calculateWage(
   return { totalHours, totalWage, effectiveMultiplier: Math.round(effectiveMultiplier * 1000) / 1000, segments, breakdown, wageBreakdown };
 }
 
-// Employer total cost = brúttólaun + lífeyrir + tryggingagjald
-export function calculateEmployerCost(brutto: number, employerPension = 0.115, socialTax = 0.0635): number {
-  return Math.round(brutto * (1 + employerPension + socialTax));
+
+// Orlof (holiday pay) rates — Orlofsgjald l. 30/1987
+export const ORLOF_RATES = [
+  { yearsFrom: 0, rate: 0.1017, labelIs: "10,17% (0–5 ár þjónusta)", labelEn: "10.17% (0–5 yrs service)" },
+  { yearsFrom: 5, rate: 0.1207, labelIs: "12,07% (5+ ár þjónusta)", labelEn: "12.07% (5+ yrs service)" },
+];
+
+export interface EmployerCostBreakdown {
+  brutto: number;
+  orlof: number;            // orlofslaun á brúttólaun
+  orlofsRate: number;       // 0.1017 | 0.1207
+  gjaldskyldBase: number;   // brutto + orlof — undirlag fyrir lífeyri og tryggingagjald
+  employerPension: number;  // 11.5% af gjaldskyldBase
+  socialTax: number;        // 6.35% af gjaldskyldBase
+  total: number;            // heildarkostnaður vinnuveitanda
+}
+
+export function calculateEmployerCost(
+  brutto: number,
+  employerPensionRate = 0.115,
+  socialTaxRate = 0.0635,
+  orlofsRate = 0.1017        // default: 10.17% (0–5 ár)
+): EmployerCostBreakdown {
+  const orlof = Math.round(brutto * orlofsRate);
+  const gjaldskyldBase = brutto + orlof;
+  const employerPension = Math.round(gjaldskyldBase * employerPensionRate);
+  const socialTax = Math.round(gjaldskyldBase * socialTaxRate);
+  return {
+    brutto,
+    orlof,
+    orlofsRate,
+    gjaldskyldBase,
+    employerPension,
+    socialTax,
+    total: brutto + orlof + employerPension + socialTax,
+  };
 }
 
 export const COLLECTIVE_AGREEMENTS: { key: CollectiveAgreement; nameIs: string; nameEn: string }[] = [
   { key: "efling_sa", nameIs: "Efling / SA — Veitingastaðir", nameEn: "Efling / SA — Restaurants" },
   { key: "custom", nameIs: "Sérstakur samningur", nameEn: "Custom agreement" },
 ];
+

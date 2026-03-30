@@ -58,8 +58,9 @@ function fmtDate(iso: string) {
 }
 
 interface Segment { labelIs: string; labelEn: string; hours: number; multiplier: number; wage: number; category: string; }
+interface CostBreakdown { brutto: number; orlof: number; orlofsRate: number; gjaldskyldBase: number; employerPension: number; socialTax: number; total: number; }
 interface Shift { date: string; inTime: string; outTime: string | null; hours: number; wage: number; segments: Segment[]; open: boolean; }
-interface Summary { uid: string; name: string; payType: string; hourlyRate: number; monthlyRate: number; totalHours: number; bruttoWage: number; employerCost: number; shifts: Shift[]; }
+interface Summary { uid: string; name: string; payType: string; hourlyRate: number; monthlyRate: number; totalHours: number; bruttoWage: number; employerCost: number; costBreakdown?: CostBreakdown; shifts: Shift[]; }
 interface TimesheetData { period: { start: string; end: string }; summaries: Summary[]; totalEmployerCost: number; }
 
 function getPeriodLabel(start: string, end: string) {
@@ -280,13 +281,16 @@ export default function TimesheetsPage() {
                     </table>
                   </div>
 
-                  {/* Employer cost breakdown */}
-                  {isAdmin && (s.hourlyRate > 0 || s.monthlyRate > 0) && (
-                    <div style={{ padding: "10px 20px", background: theme === "light" ? "rgba(108,99,255,0.04)" : "rgba(108,99,255,0.06)", borderTop: "1px solid var(--border)", display: "flex", gap: 24, flexWrap: "wrap", fontSize: "0.8rem" }}>
-                      <span style={{ color: "var(--text-muted)" }}>{lang === "is" ? "Brúttólaun" : "Gross"}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.bruttoWage)}</strong></span>
-                      <span style={{ color: "var(--text-muted)" }}>{t.pension}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(Math.round(s.bruttoWage * 0.115))}</strong></span>
-                      <span style={{ color: "var(--text-muted)" }}>{t.social}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(Math.round(s.bruttoWage * 0.0635))}</strong></span>
-                      <span style={{ fontWeight: 700, color: "var(--warning)" }}>{t.totalCost}: {fmtKr(s.employerCost)}</span>
+                  {/* Employer cost breakdown (admin) */}
+                  {isAdmin && (s.hourlyRate > 0 || s.monthlyRate > 0) && s.costBreakdown && (
+                    <div style={{ padding: "10px 20px", background: theme === "light" ? "rgba(108,99,255,0.04)" : "rgba(108,99,255,0.06)", borderTop: "1px solid var(--border)", fontSize: "0.8rem" }}>
+                      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+                        <span style={{ color: "var(--text-muted)" }}>{lang === "is" ? "Brúttólaun" : "Gross"}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.brutto)}</strong></span>
+                        <span style={{ color: "var(--text-muted)" }}>+ {lang === "is" ? `Orlof (${(s.costBreakdown.orlofsRate * 100).toFixed(2).replace(".", ",")}%)` : `Holiday pay (${(s.costBreakdown.orlofsRate * 100).toFixed(2)}%)`}: <strong style={{ color: "#10b981" }}>{fmtKr(s.costBreakdown.orlof)}</strong></span>
+                        <span style={{ color: "var(--text-muted)" }}>+ {t.pension}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.employerPension)}</strong></span>
+                        <span style={{ color: "var(--text-muted)" }}>+ {t.social}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.socialTax)}</strong></span>
+                        <span style={{ fontWeight: 700, color: "var(--warning)", marginLeft: "auto" }}>{t.totalCost}: {fmtKr(s.costBreakdown.total)}</span>
+                      </div>
                     </div>
                   )}
 
