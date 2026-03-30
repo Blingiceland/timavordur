@@ -352,7 +352,26 @@ export default function CompanyPortal() {
           </div>
         )}
 
+        {/* Quick nav (manager+) */}
+        {canSeeTeam && (
+          <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+            {[
+              { href: `/${slug}/timesheets`, icon: "📊", labelIs: "Tímaskýrslur", labelEn: "Timesheets" },
+              { href: `/${slug}/schedule`, icon: "🗓", labelIs: "Vaktaplan", labelEn: "Schedule" },
+            ].map(link => (
+              <a key={link.href} href={link.href}
+                style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 18px", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", textDecoration: "none", color: "var(--text-primary)", fontSize: "0.88rem", fontWeight: 500, transition: "all 0.15s" }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--brand)"; e.currentTarget.style.color = "var(--brand)"; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)"; e.currentTarget.style.color = "var(--text-primary)"; }}>
+                <span>{link.icon}</span>
+                <span>{lang === "is" ? link.labelIs : link.labelEn}</span>
+              </a>
+            ))}
+          </div>
+        )}
+
         {/* Tabs */}
+
         {tabs.length > 1 && (
           <div style={{ display: "flex", gap: "4px", marginBottom: "24px", background: "var(--bg-surface)", padding: "4px", borderRadius: "var(--radius-md)", width: "fit-content" }}>
             {tabs.map(tb => (
