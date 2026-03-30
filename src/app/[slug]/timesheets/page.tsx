@@ -21,6 +21,7 @@ const T = {
     monthly: "Föst mánaðarlaun", averaged: "Jafnaðarkaup",
     seedBtn: "🧪 Búa til mock gögn", seedDel: "🗑 Eyða mock gögnum", seeding: "Hleður...",
     showShifts: "Sýna vaktir", hideShifts: "Fela vaktir",
+    avgPerHr: "Meðalkostnaður/klst",
   },
   en: {
     title: "Timesheets", back: "← Back", allStaff: "All staff",
@@ -34,6 +35,7 @@ const T = {
     monthly: "Fixed monthly", averaged: "Averaged pay",
     seedBtn: "🧪 Create mock data", seedDel: "🗑 Delete mock data", seeding: "Loading...",
     showShifts: "Show shifts", hideShifts: "Hide shifts",
+    avgPerHr: "Avg. cost/hr",
   },
 };
 
@@ -191,21 +193,28 @@ export default function TimesheetsPage() {
         {!loading && data && (
           <>
             {/* Total summary cards (multi-employee) */}
-            {isManager && data.summaries.length > 1 && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 24 }}>
-                {[
-                  { label: t.hours, value: fmtHrs(data.summaries.reduce((s, x) => s + x.totalHours, 0)), icon: "⏱" },
-                  { label: t.wage, value: fmtKr(data.summaries.reduce((s, x) => s + x.bruttoWage, 0)), icon: "💰" },
-                  { label: t.totalCost, value: fmtKr(data.totalEmployerCost), icon: "🏢" },
-                ].map(c => (
-                  <div key={c.label} className="card" style={{ padding: "18px 20px" }}>
-                    <div style={{ fontSize: "1.4rem", marginBottom: 4 }}>{c.icon}</div>
-                    <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "var(--font-heading)" }}>{c.value}</div>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>{c.label}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            {isManager && data.summaries.length > 1 && (() => {
+              const totHrs = data.summaries.reduce((s, x) => s + x.totalHours, 0);
+              const totWage = data.summaries.reduce((s, x) => s + x.bruttoWage, 0);
+              const totCost = data.totalEmployerCost;
+              const avgPerHr = totHrs > 0 ? Math.round(totCost / totHrs) : 0;
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 24 }}>
+                  {[
+                    { label: t.hours, value: fmtHrs(totHrs), icon: "⏱" },
+                    { label: t.wage, value: fmtKr(totWage), icon: "💰" },
+                    { label: t.totalCost, value: fmtKr(totCost), icon: "🏢" },
+                    { label: t.avgPerHr, value: avgPerHr > 0 ? fmtKr(avgPerHr) : "—", icon: "📊" },
+                  ].map(c => (
+                    <div key={c.label} className="card" style={{ padding: "18px 20px" }}>
+                      <div style={{ fontSize: "1.4rem", marginBottom: 4 }}>{c.icon}</div>
+                      <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "var(--font-heading)" }}>{c.value}</div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>{c.label}</div>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
 
             {data.summaries.length === 0 && <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--text-muted)" }}>{t.noData}</div>}
 
@@ -282,17 +291,25 @@ export default function TimesheetsPage() {
                   </div>
 
                   {/* Employer cost breakdown (admin) */}
-                  {isAdmin && (s.hourlyRate > 0 || s.monthlyRate > 0) && s.costBreakdown && (
-                    <div style={{ padding: "10px 20px", background: theme === "light" ? "rgba(108,99,255,0.04)" : "rgba(108,99,255,0.06)", borderTop: "1px solid var(--border)", fontSize: "0.8rem" }}>
-                      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
-                        <span style={{ color: "var(--text-muted)" }}>{lang === "is" ? "Brúttólaun" : "Gross"}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.brutto)}</strong></span>
-                        <span style={{ color: "var(--text-muted)" }}>+ {lang === "is" ? `Orlof (${(s.costBreakdown.orlofsRate * 100).toFixed(2).replace(".", ",")}%)` : `Holiday pay (${(s.costBreakdown.orlofsRate * 100).toFixed(2)}%)`}: <strong style={{ color: "#10b981" }}>{fmtKr(s.costBreakdown.orlof)}</strong></span>
-                        <span style={{ color: "var(--text-muted)" }}>+ {t.pension}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.employerPension)}</strong></span>
-                        <span style={{ color: "var(--text-muted)" }}>+ {t.social}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.socialTax)}</strong></span>
-                        <span style={{ fontWeight: 700, color: "var(--warning)", marginLeft: "auto" }}>{t.totalCost}: {fmtKr(s.costBreakdown.total)}</span>
+                  {isAdmin && (s.hourlyRate > 0 || s.monthlyRate > 0) && s.costBreakdown && (() => {
+                    const avgCostPerHr = s.totalHours > 0 ? Math.round(s.costBreakdown.total / s.totalHours) : 0;
+                    return (
+                      <div style={{ padding: "10px 20px", background: theme === "light" ? "rgba(108,99,255,0.04)" : "rgba(108,99,255,0.06)", borderTop: "1px solid var(--border)", fontSize: "0.8rem" }}>
+                        <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+                          <span style={{ color: "var(--text-muted)" }}>{lang === "is" ? "Brúttólaun" : "Gross"}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.brutto)}</strong></span>
+                          <span style={{ color: "var(--text-muted)" }}>+ {lang === "is" ? `Orlof (${(s.costBreakdown.orlofsRate * 100).toFixed(2).replace(".", ",")}%)` : `Holiday pay (${(s.costBreakdown.orlofsRate * 100).toFixed(2)}%)`}: <strong style={{ color: "#10b981" }}>{fmtKr(s.costBreakdown.orlof)}</strong></span>
+                          <span style={{ color: "var(--text-muted)" }}>+ {t.pension}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.employerPension)}</strong></span>
+                          <span style={{ color: "var(--text-muted)" }}>+ {t.social}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.costBreakdown.socialTax)}</strong></span>
+                          <span style={{ fontWeight: 700, color: "var(--warning)" }}>{t.totalCost}: {fmtKr(s.costBreakdown.total)}</span>
+                          {avgCostPerHr > 0 && (
+                            <span style={{ marginLeft: "auto", background: "var(--brand-glow)", border: "1px solid var(--brand)", borderRadius: 8, padding: "3px 10px", fontWeight: 700, color: "var(--brand-light)", whiteSpace: "nowrap" }}>
+                              📊 {fmtKr(avgCostPerHr)}/{lang === "is" ? "klst" : "hr"}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Toggle per-shift detail */}
                   <div style={{ borderTop: "1px solid var(--border)" }}>
