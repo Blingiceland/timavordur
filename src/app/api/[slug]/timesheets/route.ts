@@ -114,41 +114,36 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       const monthlyRate = (staff.monthlyRate as number) || 0;
       const agreement = ((staff.collectiveAgreement as string) || "efling_sa") as "efling_sa" | "custom";
 
-      // Build shifts from in/out pairs
-      interface Shift { date: string; inTime: Date; outTime: Date | null; hours: number; wage: number; multiplier: number; wageData?: Record<string, unknown> }
+      // Build shifts from in/out pairs — include wage segments for display
+      interface Segment { labelIs: string; labelEn: string; hours: number; multiplier: number; wage: number; category: string; }
+      interface Shift { date: string; inTime: Date; outTime: Date | null; hours: number; wage: number; segments: Segment[]; open: boolean; }
       const shifts: Shift[] = [];
-      let pendingIn: { timestamp: Date; displayTime: string } | null = null;
+      let pendingIn: { timestamp: Date } | null = null;
 
       for (const r of records) {
         if (r.type === "in") {
-          pendingIn = { timestamp: r.timestamp, displayTime: r.displayTime };
+          pendingIn = { timestamp: r.timestamp };
         } else if (r.type === "out" && pendingIn) {
-          // Calculate wage for this shift
           const wage = calculateWage(pendingIn.timestamp, r.timestamp, hourlyRate, agreement);
           shifts.push({
             date: pendingIn.timestamp.toISOString().slice(0, 10),
-            inTime: pendingIn.timestamp,
-            outTime: r.timestamp,
-            hours: wage.totalHours,
-            wage: wage.totalWage,
-            multiplier: wage.effectiveMultiplier,
-            wageData: r.wageData,
+            inTime: pendingIn.timestamp, outTime: r.timestamp,
+            hours: wage.totalHours, wage: wage.totalWage,
+            segments: wage.segments.map(seg => ({ labelIs: seg.labelIs, labelEn: seg.labelEn, hours: Math.round(seg.hours * 100) / 100, multiplier: seg.multiplier, wage: Math.round(seg.wage), category: seg.category })),
+            open: false,
           });
           pendingIn = null;
         }
       }
-
-      // If still punched in — open shift
       if (pendingIn) {
         const now = new Date();
         const wage = calculateWage(pendingIn.timestamp, now, hourlyRate, agreement);
         shifts.push({
           date: pendingIn.timestamp.toISOString().slice(0, 10),
-          inTime: pendingIn.timestamp,
-          outTime: null,
-          hours: wage.totalHours,
-          wage: wage.totalWage,
-          multiplier: wage.effectiveMultiplier,
+          inTime: pendingIn.timestamp, outTime: null,
+          hours: wage.totalHours, wage: wage.totalWage,
+          segments: wage.segments.map(seg => ({ labelIs: seg.labelIs, labelEn: seg.labelEn, hours: Math.round(seg.hours * 100) / 100, multiplier: seg.multiplier, wage: Math.round(seg.wage), category: seg.category })),
+          open: true,
         });
       }
 
@@ -156,18 +151,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       let bruttoWage = 0;
       if (payType === "hourly") bruttoWage = shifts.reduce((s, x) => s + x.wage, 0);
       else if (payType === "monthly") bruttoWage = monthlyRate;
-      else bruttoWage = monthlyRate || shifts.reduce((s, x) => s + x.wage, 0); // averaged: use set amount or calc
+      else bruttoWage = monthlyRate || shifts.reduce((s, x) => s + x.wage, 0);
 
       const employerCost = calculateEmployerCost(bruttoWage, EMPLOYER_PENSION, SOCIAL_TAX);
 
       return {
-        uid,
-        name: staff.name as string,
-        email: staff.email as string,
-        payType,
-        hourlyRate,
-        monthlyRate,
-        agreement,
+        uid, name: staff.name as string, email: staff.email as string,
+        payType, hourlyRate, monthlyRate, agreement,
         totalHours: Math.round(totalHours * 100) / 100,
         bruttoWage: Math.round(bruttoWage),
         employerCost: Math.round(employerCost),
@@ -177,8 +167,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
           outTime: s.outTime?.toISOString() || null,
           hours: Math.round(s.hours * 100) / 100,
           wage: Math.round(s.wage),
-          multiplier: s.multiplier,
-          open: s.outTime === null,
+          segments: s.segments,
+          open: s.open,
         })),
       };
     }));

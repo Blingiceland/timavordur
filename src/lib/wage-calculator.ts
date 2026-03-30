@@ -76,6 +76,10 @@ function getEflingSARate(date: Date, holidayMap: Map<string, HolidayInfo>): Rate
   }
 
   // Mon–Fri (non-holiday)
+  // 00:00–08:00: ×1.45 (miðnætti álag — eins og helgar)
+  // 08:00–17:00: ×1.00 (dagvinna)
+  // 17:00–24:00: ×1.33 (kvöldvinna)
+  if (hour < 8)  return { multiplier: 1.45, labelIs: "Helgarálag (miðnætti)", labelEn: "Night rate (weekday)", category: "helgarvinna" };
   if (hour < 17) return { multiplier: 1.00, labelIs: "Dagvinna", labelEn: "Day rate", category: "dagvinna" };
   return { multiplier: 1.33, labelIs: "Kvöldvinna", labelEn: "Evening rate", category: "kvoldvinna" };
 }
@@ -111,7 +115,8 @@ function getNextBoundary(date: Date, holidayMap: Map<string, HolidayInfo>): Date
     return midnight;
   }
 
-  // Mon–Fri — boundary at 17:00
+  // Mon–Fri — boundaries at 08:00 and 17:00
+  if (hour < 8)  return new Date(Date.UTC(year, month, day, 8, 0, 0));
   if (hour < 17) return new Date(Date.UTC(year, month, day, 17, 0, 0));
   return midnight;
 }

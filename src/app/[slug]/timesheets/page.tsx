@@ -10,28 +10,30 @@ type Lang = "is" | "en";
 
 const T = {
   is: {
-    title: "Tímaskýrslur", back: "← Til baka", period: "Tímabil", allStaff: "Allir starfsmenn",
+    title: "Tímaskýrslur", back: "← Til baka", allStaff: "Allir starfsmenn",
     hours: "Tímar", wage: "Brúttólaun", cost: "Heildarkostnaður", loading: "Hleður...",
     noData: "Engar færslur á þessu tímabili", open: "Opin vakt", perHr: "kr/klst",
-    dagvinna: "Dagvinna", kvoldvinna: "Kvöldvinna", helgarvinna: "Helgarvinna",
-    naetuvinna: "Nætuvinna", storhatid: "Stórhátíðaálag",
+    dagvinna: "Dagvinna", kvoldvinna: "Kvöldvinna (+33%)", helgarvinna: "Helgar (+45%)",
+    naetuvinna: "Nætur (+55%)", storhatid: "Stórhátíð (+90%)",
+    total: "Samtals", shifts: "Vaktir",
     pension: "+ Lífeyrir (11,5%)", social: "+ Tryggingagjald (6,35%)",
     totalCost: "Heildarkostnaður vinnuveitanda", noRate: "Kaup ekki stillt",
     monthly: "Föst mánaðarlaun", averaged: "Jafnaðarkaup",
-    seedBtn: "🧪 Búa til mock gögn", seedDel: "🗑 Eyða mock gögnum",
-    seeding: "Hleður...",
+    seedBtn: "🧪 Búa til mock gögn", seedDel: "🗑 Eyða mock gögnum", seeding: "Hleður...",
+    showShifts: "Sýna vaktir", hideShifts: "Fela vaktir",
   },
   en: {
-    title: "Timesheets", back: "← Back", period: "Period", allStaff: "All staff",
+    title: "Timesheets", back: "← Back", allStaff: "All staff",
     hours: "Hours", wage: "Gross wages", cost: "Total cost", loading: "Loading...",
     noData: "No records for this period", open: "Open shift", perHr: "ISK/hr",
-    dagvinna: "Day rate", kvoldvinna: "Evening rate", helgarvinna: "Weekend rate",
-    naetuvinna: "Night rate", storhatid: "Public holiday",
+    dagvinna: "Day rate", kvoldvinna: "Evening (+33%)", helgarvinna: "Weekend (+45%)",
+    naetuvinna: "Night (+55%)", storhatid: "Holiday (+90%)",
+    total: "Total", shifts: "Shifts",
     pension: "+ Pension (11.5%)", social: "+ Social tax (6.35%)",
     totalCost: "Total employer cost", noRate: "Rate not set",
     monthly: "Fixed monthly", averaged: "Averaged pay",
-    seedBtn: "🧪 Create mock data", seedDel: "🗑 Delete mock data",
-    seeding: "Loading...",
+    seedBtn: "🧪 Create mock data", seedDel: "🗑 Delete mock data", seeding: "Loading...",
+    showShifts: "Show shifts", hideShifts: "Hide shifts",
   },
 };
 
@@ -40,31 +42,53 @@ const RATE_COLORS: Record<string, string> = {
   naetuvinna: "#8b5cf6", storhatid: "#ef4444",
 };
 
-function fmtHrs(h: number) { const hh = Math.floor(h); const mm = Math.round((h - hh) * 60); return `${hh}h ${mm}m`; }
+// Always 24h, UTC
+function fmt24(iso: string) {
+  const d = new Date(iso);
+  return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
+}
+function fmtHrs(h: number) {
+  const hh = Math.floor(h); const mm = Math.round((h - hh) * 60);
+  return mm > 0 ? `${hh}h ${mm}m` : `${hh}h`;
+}
 function fmtKr(n: number) { return n.toLocaleString("is-IS") + " kr"; }
-function fmtTime(iso: string) { return new Date(iso).toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }); }
 function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  const d = new Date(iso);
+  return d.toLocaleDateString("is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 }
 
-interface Shift { date: string; inTime: string; outTime: string | null; hours: number; wage: number; multiplier: number; open: boolean; }
-interface Summary { uid: string; name: string; email: string; payType: string; hourlyRate: number; monthlyRate: number; totalHours: number; bruttoWage: number; employerCost: number; shifts: Shift[]; }
-interface TimesheetData { period: { start: string; end: string }; companyName: string; summaries: Summary[]; totalEmployerCost: number; }
+interface Segment { labelIs: string; labelEn: string; hours: number; multiplier: number; wage: number; category: string; }
+interface Shift { date: string; inTime: string; outTime: string | null; hours: number; wage: number; segments: Segment[]; open: boolean; }
+interface Summary { uid: string; name: string; payType: string; hourlyRate: number; monthlyRate: number; totalHours: number; bruttoWage: number; employerCost: number; shifts: Shift[]; }
+interface TimesheetData { period: { start: string; end: string }; summaries: Summary[]; totalEmployerCost: number; }
 
 function getPeriodLabel(start: string, end: string) {
   const s = new Date(start); const e = new Date(end);
   return `${s.getUTCDate()}. ${s.toLocaleString("is-IS", { month: "short", timeZone: "UTC" })} – ${e.getUTCDate()}. ${e.toLocaleString("is-IS", { month: "long", timeZone: "UTC" })} ${e.getUTCFullYear()}`;
 }
-
 function getPeriodParam(offset = 0) {
-  const now = new Date();
-  let y = now.getUTCFullYear(); let m = now.getUTCMonth();
+  const now = new Date(); let y = now.getUTCFullYear(); let m = now.getUTCMonth();
   if (now.getUTCDate() < 25) m -= 1;
   m += offset;
   while (m < 0) { m += 12; y -= 1; }
   while (m > 11) { m -= 12; y += 1; }
   return `${y}-${String(m + 1).padStart(2, "0")}`;
 }
+
+// Aggregate hours and wage per category across all shifts
+function aggregateBreakdown(shifts: Shift[]) {
+  const result: Record<string, { hours: number; wage: number; label: string; }> = {};
+  for (const sh of shifts) {
+    for (const seg of (sh.segments || [])) {
+      if (!result[seg.category]) result[seg.category] = { hours: 0, wage: 0, label: seg.labelIs };
+      result[seg.category].hours += seg.hours;
+      result[seg.category].wage += seg.wage;
+    }
+  }
+  return result;
+}
+
+const CATEGORY_ORDER = ["dagvinna", "kvoldvinna", "helgarvinna", "naetuvinna", "storhatid"] as const;
 
 export default function TimesheetsPage() {
   const { slug } = useParams() as { slug: string };
@@ -79,7 +103,7 @@ export default function TimesheetsPage() {
   const [periodOffset, setPeriodOffset] = useState(0);
   const [selectedUid, setSelectedUid] = useState("all");
   const [myRole, setMyRole] = useState("");
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [showShifts, setShowShifts] = useState<Record<string, boolean>>({});
   const [seeding, setSeeding] = useState(false);
   const [seedMsg, setSeedMsg] = useState("");
 
@@ -90,16 +114,12 @@ export default function TimesheetsPage() {
     setLoading(true); setError("");
     try {
       const token = await user.getIdToken();
-      const period = getPeriodParam(periodOffset);
-      const uid = selectedUid === "all" ? "all" : selectedUid;
-      const res = await fetch(`/api/${slug}/timesheets?period=${period}&uid=${uid}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`/api/${slug}/timesheets?period=${getPeriodParam(periodOffset)}&uid=${selectedUid}`, { headers: { Authorization: `Bearer ${token}` } });
       const d = await res.json();
-      if (res.ok) setData(d);
-      else setError(d.error || "Villa");
+      if (res.ok) setData(d); else setError(d.error || "Villa");
     } catch { setError("Netvillla"); } finally { setLoading(false); }
   }, [user, slug, periodOffset, selectedUid]);
 
-  // Also fetch my role for seed button
   useEffect(() => {
     if (!user) return;
     user.getIdToken().then(token =>
@@ -124,13 +144,12 @@ export default function TimesheetsPage() {
 
   const isManager = ["manager", "admin", "owner"].includes(myRole);
   const isAdmin = ["admin", "owner"].includes(myRole);
-
   if (!user) return <div style={{ padding: 40, textAlign: "center" }}>{t.loading}</div>;
 
   return (
     <div className="page" style={{ minHeight: "100vh" }}>
       {/* Header */}
-      <div style={{ borderBottom: "1px solid var(--border)", padding: "16px 0", background: "var(--bg-surface)", position: "sticky", top: 0, zIndex: 50 }}>
+      <div style={{ borderBottom: "1px solid var(--border)", padding: "14px 0", background: "var(--bg-surface)", position: "sticky", top: 0, zIndex: 50 }}>
         <div className="container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <Link href={`/${slug}`} style={{ color: "var(--text-muted)", fontSize: "0.88rem", textDecoration: "none" }}>{t.back}</Link>
@@ -138,13 +157,12 @@ export default function TimesheetsPage() {
           </div>
           {/* Period nav */}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={() => setPeriodOffset(p => p - 1)} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: "var(--text-primary)", fontSize: "1rem" }}>‹</button>
+            <button onClick={() => setPeriodOffset(p => p - 1)} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 12px", cursor: "pointer", color: "var(--text-primary)" }}>‹</button>
             <span style={{ fontSize: "0.9rem", color: "var(--text-primary)", minWidth: 200, textAlign: "center" }}>
               {data ? getPeriodLabel(data.period.start, data.period.end) : getPeriodParam(periodOffset)}
             </span>
-            <button onClick={() => setPeriodOffset(p => p + 1)} disabled={periodOffset >= 0} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: "var(--text-primary)", fontSize: "1rem", opacity: periodOffset >= 0 ? 0.4 : 1 }}>›</button>
+            <button onClick={() => setPeriodOffset(p => p + 1)} disabled={periodOffset >= 0} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "5px 12px", cursor: "pointer", color: "var(--text-primary)", opacity: periodOffset >= 0 ? 0.4 : 1 }}>›</button>
           </div>
-          {/* Staff filter */}
           {isManager && data && data.summaries.length > 1 && (
             <select value={selectedUid} onChange={e => setSelectedUid(e.target.value)}
               style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "6px 12px", color: "var(--text-primary)", fontSize: "0.88rem" }}>
@@ -155,13 +173,13 @@ export default function TimesheetsPage() {
         </div>
       </div>
 
-      <div className="container" style={{ padding: "24px 24px" }}>
-        {/* Dev seed buttons */}
+      <div className="container" style={{ padding: "24px" }}>
+        {/* Dev seed */}
         {isAdmin && (
-          <div style={{ background: "rgba(255,184,48,0.1)", border: "1px solid rgba(255,184,48,0.3)", borderRadius: 10, padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ background: "rgba(255,184,48,0.1)", border: "1px solid rgba(255,184,48,0.3)", borderRadius: 10, padding: "10px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: "0.8rem", color: "var(--warning)", fontWeight: 600 }}>🧪 Dev tools</span>
-            <button onClick={() => doSeed(false)} disabled={seeding} style={{ fontSize: "0.82rem", padding: "5px 12px", borderRadius: 6, border: "none", background: "var(--brand)", color: "#fff", cursor: "pointer" }}>{seeding ? t.seeding : t.seedBtn}</button>
-            <button onClick={() => doSeed(true)} disabled={seeding} style={{ fontSize: "0.82rem", padding: "5px 12px", borderRadius: 6, border: "none", background: "var(--danger)", color: "#fff", cursor: "pointer" }}>{seeding ? t.seeding : t.seedDel}</button>
+            <button onClick={() => doSeed(false)} disabled={seeding} style={{ fontSize: "0.82rem", padding: "4px 12px", borderRadius: 6, border: "none", background: "var(--brand)", color: "#fff", cursor: "pointer" }}>{seeding ? t.seeding : t.seedBtn}</button>
+            <button onClick={() => doSeed(true)} disabled={seeding} style={{ fontSize: "0.82rem", padding: "4px 12px", borderRadius: 6, border: "none", background: "var(--danger)", color: "#fff", cursor: "pointer" }}>{seeding ? t.seeding : t.seedDel}</button>
             {seedMsg && <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{seedMsg}</span>}
           </div>
         )}
@@ -171,148 +189,168 @@ export default function TimesheetsPage() {
 
         {!loading && data && (
           <>
-            {/* Summary cards */}
+            {/* Total summary cards (multi-employee) */}
             {isManager && data.summaries.length > 1 && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16, marginBottom: 28 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 24 }}>
                 {[
                   { label: t.hours, value: fmtHrs(data.summaries.reduce((s, x) => s + x.totalHours, 0)), icon: "⏱" },
                   { label: t.wage, value: fmtKr(data.summaries.reduce((s, x) => s + x.bruttoWage, 0)), icon: "💰" },
                   { label: t.totalCost, value: fmtKr(data.totalEmployerCost), icon: "🏢" },
                 ].map(c => (
-                  <div key={c.label} className="card" style={{ padding: "20px 24px" }}>
-                    <div style={{ fontSize: "1.5rem", marginBottom: 6 }}>{c.icon}</div>
-                    <div style={{ fontSize: "1.3rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "var(--font-heading)" }}>{c.value}</div>
-                    <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>{c.label}</div>
+                  <div key={c.label} className="card" style={{ padding: "18px 20px" }}>
+                    <div style={{ fontSize: "1.4rem", marginBottom: 4 }}>{c.icon}</div>
+                    <div style={{ fontSize: "1.2rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "var(--font-heading)" }}>{c.value}</div>
+                    <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.04em" }}>{c.label}</div>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Per-employee sections */}
-            {data.summaries.length === 0 && (
-              <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--text-muted)" }}>{t.noData}</div>
-            )}
+            {data.summaries.length === 0 && <div className="card" style={{ textAlign: "center", padding: 48, color: "var(--text-muted)" }}>{t.noData}</div>}
 
-            {data.summaries.map(s => (
-              <div key={s.uid} className="card" style={{ marginBottom: 20, padding: 0, overflow: "hidden" }}>
-                {/* Employee header */}
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: "1px solid var(--border)", flexWrap: "wrap", gap: 12, cursor: "pointer", background: "var(--bg-card)" }}
-                  onClick={() => setExpanded(e => ({ ...e, [s.uid]: !e[s.uid] }))}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: "50%", background: "var(--brand-glow)", border: "2px solid var(--brand)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "var(--brand-light)", fontSize: "1rem" }}>
-                      {s.name.charAt(0)}
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{s.name}</div>
-                      <div style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
-                        {s.payType === "hourly" ? `${s.hourlyRate.toLocaleString("is-IS")} ${t.perHr}` : s.payType === "monthly" ? t.monthly : t.averaged}
-                        {" · "}{s.shifts.length} {lang === "is" ? "vaktir" : "shifts"}
+            {data.summaries.map(s => {
+              const breakdown = aggregateBreakdown(s.shifts);
+              const activeCats = CATEGORY_ORDER.filter(c => (breakdown[c]?.hours || 0) > 0);
+              const showingShifts = showShifts[s.uid];
+
+              return (
+                <div key={s.uid} className="card" style={{ marginBottom: 20, padding: 0, overflow: "hidden" }}>
+                  {/* Employee name row */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", background: "var(--bg-card)", borderBottom: "1px solid var(--border)", flexWrap: "wrap", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 38, height: 38, borderRadius: "50%", background: "var(--brand-glow)", border: "2px solid var(--brand)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, color: "var(--brand-light)" }}>
+                        {s.name.charAt(0)}
                       </div>
+                      <div>
+                        <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>{s.name}</div>
+                        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                          {s.payType === "hourly" ? `${s.hourlyRate.toLocaleString("is-IS")} ${t.perHr}` : s.payType === "monthly" ? t.monthly : t.averaged}
+                          {" · "}{s.shifts.length} {lang === "is" ? "vaktir" : "shifts"}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+                      {s.hourlyRate > 0 || s.monthlyRate > 0 ? (
+                        <>
+                          <div style={{ textAlign: "right" }}>
+                            <div style={{ fontWeight: 700, color: "var(--accent)" }}>{fmtKr(s.bruttoWage)}</div>
+                            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{t.wage}</div>
+                          </div>
+                          {isAdmin && (
+                            <div style={{ textAlign: "right" }}>
+                              <div style={{ fontWeight: 700, color: "var(--warning)" }}>{fmtKr(s.employerCost)}</div>
+                              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{t.cost}</div>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontStyle: "italic" }}>{t.noRate}</span>
+                      )}
                     </div>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)" }}>{fmtHrs(s.totalHours)}</div>
-                      <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{t.hours}</div>
+
+                  {/* Aggregated hours table — what goes into DK */}
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="table" style={{ fontSize: "0.88rem" }}>
+                      <thead>
+                        <tr>
+                          {activeCats.map(cat => (
+                            <th key={cat} style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                <span style={{ width: 8, height: 8, borderRadius: "50%", background: RATE_COLORS[cat], display: "inline-block" }} />
+                                {t[cat as keyof typeof t] as string}
+                              </span>
+                            </th>
+                          ))}
+                          <th style={{ textAlign: "right" }}>{t.total}</th>
+                          {s.hourlyRate > 0 && <th style={{ textAlign: "right" }}>{t.wage}</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          {activeCats.map(cat => (
+                            <td key={cat} style={{ textAlign: "right", fontWeight: 600, color: RATE_COLORS[cat] }}>
+                              {fmtHrs(breakdown[cat]?.hours || 0)}
+                            </td>
+                          ))}
+                          <td style={{ textAlign: "right", fontWeight: 700, color: "var(--text-primary)", fontSize: "1rem" }}>{fmtHrs(s.totalHours)}</td>
+                          {s.hourlyRate > 0 && <td style={{ textAlign: "right", fontWeight: 700, color: "var(--accent)", fontSize: "1rem" }}>{fmtKr(s.bruttoWage)}</td>}
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Employer cost breakdown */}
+                  {isAdmin && (s.hourlyRate > 0 || s.monthlyRate > 0) && (
+                    <div style={{ padding: "10px 20px", background: theme === "light" ? "rgba(108,99,255,0.04)" : "rgba(108,99,255,0.06)", borderTop: "1px solid var(--border)", display: "flex", gap: 24, flexWrap: "wrap", fontSize: "0.8rem" }}>
+                      <span style={{ color: "var(--text-muted)" }}>{lang === "is" ? "Brúttólaun" : "Gross"}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(s.bruttoWage)}</strong></span>
+                      <span style={{ color: "var(--text-muted)" }}>{t.pension}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(Math.round(s.bruttoWage * 0.115))}</strong></span>
+                      <span style={{ color: "var(--text-muted)" }}>{t.social}: <strong style={{ color: "var(--text-primary)" }}>{fmtKr(Math.round(s.bruttoWage * 0.0635))}</strong></span>
+                      <span style={{ fontWeight: 700, color: "var(--warning)" }}>{t.totalCost}: {fmtKr(s.employerCost)}</span>
                     </div>
-                    {s.hourlyRate > 0 || s.monthlyRate > 0 ? (
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--accent)" }}>{fmtKr(s.bruttoWage)}</div>
-                        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{t.wage}</div>
+                  )}
+
+                  {/* Toggle per-shift detail */}
+                  <div style={{ borderTop: "1px solid var(--border)" }}>
+                    <button onClick={() => setShowShifts(p => ({ ...p, [s.uid]: !p[s.uid] }))}
+                      style={{ width: "100%", padding: "9px 20px", background: "transparent", border: "none", cursor: "pointer", fontSize: "0.8rem", color: "var(--text-muted)", textAlign: "left", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span>{showingShifts ? "▲" : "▼"}</span>{showingShifts ? t.hideShifts : `${t.showShifts} (${s.shifts.length})`}
+                    </button>
+
+                    {showingShifts && (
+                      <div style={{ overflowX: "auto", borderTop: "1px solid var(--border)" }}>
+                        <table className="table" style={{ fontSize: "0.82rem" }}>
+                          <thead>
+                            <tr>
+                              <th>{lang === "is" ? "Dagur" : "Date"}</th>
+                              <th style={{ textAlign: "center" }}>{lang === "is" ? "Inn" : "In"}</th>
+                              <th style={{ textAlign: "center" }}>{lang === "is" ? "Út" : "Out"}</th>
+                              <th style={{ textAlign: "right" }}>{lang === "is" ? "Tímar" : "Hours"}</th>
+                              <th>{lang === "is" ? "Álagsflokkar" : "Rate bands"}</th>
+                              {s.hourlyRate > 0 && <th style={{ textAlign: "right" }}>{t.wage}</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {s.shifts.map((sh, i) => (
+                              <tr key={i} style={{ background: sh.open ? "rgba(108,99,255,0.04)" : undefined }}>
+                                <td style={{ fontWeight: 500 }}>{fmtDate(sh.date)}</td>
+                                <td style={{ textAlign: "center", fontFamily: "monospace" }}>{fmt24(sh.inTime)}</td>
+                                <td style={{ textAlign: "center", fontFamily: "monospace" }}>
+                                  {sh.outTime ? fmt24(sh.outTime) : <span style={{ color: "var(--accent)", fontSize: "0.75rem" }}>⏺ {t.open}</span>}
+                                </td>
+                                <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtHrs(sh.hours)}</td>
+                                <td>
+                                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                                    {(sh.segments || []).map((seg, j) => {
+                                      const pct = Math.round((seg.multiplier - 1) * 100);
+                                      const col = RATE_COLORS[seg.category] || "#999";
+                                      return (
+                                        <span key={j} style={{ padding: "1px 7px", borderRadius: 999, fontSize: "0.72rem", fontWeight: 600, background: `${col}18`, color: col, border: `1px solid ${col}40`, whiteSpace: "nowrap" }}>
+                                          {fmtHrs(seg.hours)} {pct > 0 ? `+${pct}%` : "×1.0"}
+                                        </span>
+                                      );
+                                    })}
+                                  </div>
+                                </td>
+                                {s.hourlyRate > 0 && <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtKr(sh.wage)}</td>}
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr style={{ borderTop: "2px solid var(--border)" }}>
+                              <td colSpan={3} style={{ fontWeight: 700, paddingTop: 8 }}>{lang === "is" ? "Samtals" : "Total"}</td>
+                              <td style={{ textAlign: "right", fontWeight: 700 }}>{fmtHrs(s.totalHours)}</td>
+                              <td />
+                              {s.hourlyRate > 0 && <td style={{ textAlign: "right", fontWeight: 700, color: "var(--accent)" }}>{fmtKr(s.bruttoWage)}</td>}
+                            </tr>
+                          </tfoot>
+                        </table>
                       </div>
-                    ) : (
-                      <div style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontStyle: "italic" }}>{t.noRate}</div>
                     )}
-                    {isAdmin && (s.hourlyRate > 0 || s.monthlyRate > 0) && (
-                      <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--warning)" }}>{fmtKr(s.employerCost)}</div>
-                        <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{t.cost}</div>
-                      </div>
-                    )}
-                    <span style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>{expanded[s.uid] ? "▲" : "▼"}</span>
                   </div>
                 </div>
-
-                {/* Employer cost breakdown */}
-                {isAdmin && expanded[s.uid] && (s.hourlyRate > 0 || s.monthlyRate > 0) && (
-                  <div style={{ padding: "12px 20px", background: theme === "light" ? "rgba(108,99,255,0.05)" : "rgba(108,99,255,0.06)", borderBottom: "1px solid var(--border)", display: "flex", gap: 24, flexWrap: "wrap" }}>
-                    <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                      <span style={{ color: "var(--text-muted)" }}>{lang === "is" ? "Brúttólaun" : "Gross"}: </span>
-                      <strong>{fmtKr(s.bruttoWage)}</strong>
-                    </div>
-                    <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                      <span style={{ color: "var(--text-muted)" }}>{t.pension}: </span>
-                      <strong>{fmtKr(Math.round(s.bruttoWage * 0.115))}</strong>
-                    </div>
-                    <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-                      <span style={{ color: "var(--text-muted)" }}>{t.social}: </span>
-                      <strong>{fmtKr(Math.round(s.bruttoWage * 0.0635))}</strong>
-                    </div>
-                    <div style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--warning)" }}>
-                      {t.totalCost}: {fmtKr(s.employerCost)}
-                    </div>
-                  </div>
-                )}
-
-                {/* Shifts table */}
-                {expanded[s.uid] && (
-                  <div style={{ overflowX: "auto" }}>
-                    {s.shifts.length === 0 ? (
-                      <div style={{ padding: "20px 24px", color: "var(--text-muted)", fontSize: "0.88rem" }}>{t.noData}</div>
-                    ) : (
-                      <table className="table" style={{ fontSize: "0.85rem" }}>
-                        <thead>
-                          <tr>
-                            <th>{lang === "is" ? "Dagur" : "Date"}</th>
-                            <th>{lang === "is" ? "Inn" : "In"}</th>
-                            <th>{lang === "is" ? "Út" : "Out"}</th>
-                            <th style={{ textAlign: "right" }}>{t.hours}</th>
-                            <th style={{ textAlign: "center" }}>{lang === "is" ? "Stuðull" : "Rate"}</th>
-                            {(s.hourlyRate > 0) && <th style={{ textAlign: "right" }}>{t.wage}</th>}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {s.shifts.map((sh, i) => {
-                            const multPct = Math.round((sh.multiplier - 1) * 100);
-                            const category = sh.multiplier >= 1.85 ? "storhatid" : sh.multiplier >= 1.50 ? "naetuvinna" : sh.multiplier >= 1.40 ? "helgarvinna" : sh.multiplier >= 1.30 ? "kvoldvinna" : "dagvinna";
-                            const color = RATE_COLORS[category];
-                            const catLabel = t[category as keyof typeof t] as string;
-                            return (
-                              <tr key={i}>
-                                <td style={{ fontWeight: 500, color: "var(--text-primary)" }}>
-                                  {fmtDate(sh.date)}
-                                </td>
-                                <td>{fmtTime(sh.inTime)}</td>
-                                <td>{sh.outTime ? fmtTime(sh.outTime) : <span style={{ color: "var(--accent)", fontSize: "0.78rem" }}>⏺ {t.open}</span>}</td>
-                                <td style={{ textAlign: "right", fontWeight: 600 }}>{fmtHrs(sh.hours)}</td>
-                                <td style={{ textAlign: "center" }}>
-                                  <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 600, background: `${color}20`, color, border: `1px solid ${color}50` }}>
-                                    {multPct > 0 ? `+${multPct}%` : "×1.0"} {catLabel}
-                                  </span>
-                                </td>
-                                {s.hourlyRate > 0 && (
-                                  <td style={{ textAlign: "right", fontWeight: 600, color: "var(--text-primary)" }}>
-                                    {fmtKr(sh.wage)}
-                                  </td>
-                                )}
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                        <tfoot>
-                          <tr style={{ borderTop: "2px solid var(--border)" }}>
-                            <td colSpan={3} style={{ fontWeight: 700, color: "var(--text-primary)", paddingTop: 10 }}>{lang === "is" ? "Samtals" : "Total"}</td>
-                            <td style={{ textAlign: "right", fontWeight: 700, color: "var(--text-primary)" }}>{fmtHrs(s.totalHours)}</td>
-                            <td />
-                            {s.hourlyRate > 0 && <td style={{ textAlign: "right", fontWeight: 700, color: "var(--accent)", fontSize: "1rem" }}>{fmtKr(s.bruttoWage)}</td>}
-                          </tr>
-                        </tfoot>
-                      </table>
-                    )}
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
       </div>
