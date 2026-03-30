@@ -134,7 +134,7 @@ export default function SchedulePage() {
 
   useEffect(() => { return onAuthStateChanged(auth, setUser); }, []);
 
-  // Load portal data (role + staff list) once on auth
+  // 1. Load portal staff list independently (for modal dropdown, non-blocking)
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
@@ -142,7 +142,7 @@ export default function SchedulePage() {
       const r = await fetch(`/api/${slug}/portal`, { headers: { Authorization: `Bearer ${tok}` } });
       if (cancelled || !r.ok) return;
       const d = await r.json();
-      setMyRole(d.role || "");
+      if (d.role) setMyRole(d.role);
       const approved = (d.staffList || []).filter((s: StaffMember) => s.status === "approved");
       setStaffList(approved);
       const m = new Map<string, number>();
@@ -153,9 +153,9 @@ export default function SchedulePage() {
     return () => { cancelled = true; };
   }, [user, slug]);
 
-  // Load shifts + templates whenever week or reloadKey changes
+  // 2. Load shifts (+ role) immediately on auth — no waiting for portal
   useEffect(() => {
-    if (!user || !myRole) return;
+    if (!user) return;
     let cancelled = false;
     const load = async () => {
       setLoading(true);
@@ -163,19 +163,26 @@ export default function SchedulePage() {
         const tok = await user.getIdToken();
         const from = toYMD(weekStart);
         const to = toYMD(addDays(weekStart, 6));
-        const isMgr = ["manager", "admin", "owner"].includes(myRole);
-        const [sRes, tRes] = await Promise.all([
-          fetch(`/api/${slug}/schedule?from=${from}&to=${to}`, { headers: { Authorization: `Bearer ${tok}` } }),
-          isMgr ? fetch(`/api/${slug}/shift-templates`, { headers: { Authorization: `Bearer ${tok}` } }) : Promise.resolve(null),
-        ]);
+        const sRes = await fetch(`/api/${slug}/schedule?from=${from}&to=${to}`, { headers: { Authorization: `Bearer ${tok}` } });
         if (cancelled) return;
-        if (sRes.ok) { const d = await sRes.json(); setShifts(d.shifts || []); }
-        if (tRes?.ok) { const d = await tRes.json(); setTemplates(d.templates || []); }
+        if (sRes.ok) {
+          const d = await sRes.json();
+          setShifts(d.shifts || []);
+          const role = d.myRole || myRole;
+          if (d.myRole) setMyRole(d.myRole);
+          // If manager, also load templates
+          if (["manager", "admin", "owner"].includes(role)) {
+            const tRes = await fetch(`/api/${slug}/shift-templates`, { headers: { Authorization: `Bearer ${tok}` } });
+            if (!cancelled && tRes.ok) { const td = await tRes.json(); setTemplates(td.templates || []); }
+          }
+        }
       } finally { if (!cancelled) setLoading(false); }
     };
     load();
     return () => { cancelled = true; };
-  }, [user, slug, weekStart, myRole, reloadKey]); // stable deps — no callbacks
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, slug, weekStart, reloadKey]); // intentionally excludes myRole to avoid waterfall
+
 
   // ── Drag handlers ─────────────────────────────────────────────────────────
   const getCellFromEvent = (e: React.MouseEvent, dayIndex: number) => {
@@ -270,7 +277,7 @@ export default function SchedulePage() {
   const totalEst = shifts.reduce((s, x) => s + (x.wageEstimate || 0), 0);
   const totalHrs = shifts.reduce((s, x) => s + (x.totalHours || 0), 0);
 
-  if (!user) return <div style={{ padding: 40, textAlign: "center" }}>{t.loading}</div>;
+  if (!user) return <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>{t.loading}</div>;
 
   return (
     <div className="page" style={{ minHeight: "100vh", userSelect: "none" }}>
@@ -329,9 +336,8 @@ export default function SchedulePage() {
 
       {/* Grid */}
       <div className="container" style={{ padding: "16px 24px" }}>
-        {loading && <div style={{ textAlign: "center", padding: 40, color: "var(--text-muted)" }}>{t.loading}</div>}
-        {!loading && (
-          <div ref={gridRef} className="schedule-grid" style={{ position: "relative", overflowX: "auto" }}>
+        {/* Grid — always visible, skeleton rows while loading */}
+        <div ref={gridRef} className="schedule-grid" style={{ position: "relative", overflowX: "auto", opacity: loading ? 0.4 : 1, transition: "opacity 0.2s" }}>
             <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, 1fr)`, minWidth: 680 }}>
               {/* Header row */}
               <div style={{ height: 40 }} />
@@ -421,7 +427,6 @@ export default function SchedulePage() {
               </div>
             )}
           </div>
-        )}
 
         {/* Legend */}
         {shifts.length > 0 && (
