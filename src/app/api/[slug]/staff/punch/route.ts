@@ -102,10 +102,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       uid: decoded.uid, name: body.name || decoded.name || decoded.email || "Unknown",
       email: decoded.email || "", type: newType, timestamp: FieldValue.serverTimestamp(),
       date: now.toISOString().slice(0, 10),
-      displayTime: now.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" }),
+      displayTime: `${String(now.getUTCHours()).padStart(2,"0")}:${String(now.getUTCMinutes()).padStart(2,"0")}`,
     });
 
-    return NextResponse.json({ type: newType, time: now.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" }) });
+    return NextResponse.json({ type: newType, time: `${String(now.getUTCHours()).padStart(2,"0")}:${String(now.getUTCMinutes()).padStart(2,"0")}` });
   } catch (err) {
     console.error("[punch POST]", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

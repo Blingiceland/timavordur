@@ -8,6 +8,10 @@ export type Role = "staff" | "manager" | "admin" | "owner";
 const ROLE_LEVEL: Record<Role, number> = { staff: 1, manager: 2, admin: 3, owner: 4 };
 const atLeast = (role: Role, min: Role) => (ROLE_LEVEL[role] || 0) >= ROLE_LEVEL[min];
 
+// Always 24h UTC
+const fmt24 = (d: Date) => `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}`;
+
+
 const toStr = (val: unknown): string => {
   if (!val) return "";
   if (typeof val === "string") return val;
@@ -160,7 +164,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       uid: decoded.uid, name: s.name || decoded.name || decoded.email || "Unknown",
       email: decoded.email || "", type: newType, timestamp: FieldValue.serverTimestamp(),
       date: now.toISOString().slice(0, 10),
-      displayTime: now.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" }),
+      displayTime: fmt24(now),
     };
 
     // On punch-out: calculate wage breakdown for this shift
@@ -185,7 +189,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").add(newRecordData);
 
-    return NextResponse.json({ type: newType, time: now.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit" }) });
+    return NextResponse.json({ type: newType, time: fmt24(now) });
   } catch (err) {
     console.error("[portal POST]", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

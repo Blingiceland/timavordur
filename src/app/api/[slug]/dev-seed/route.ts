@@ -76,14 +76,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
         uid: MOCK_UID, name: MOCK_NAME, email: MOCK_EMAIL,
         type: "in", timestamp: shift.in,
         date: shift.in.toISOString().slice(0, 10),
-        displayTime: shift.in.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }),
+        displayTime: `${String(shift.in.getUTCHours()).padStart(2,"0")}:${String(shift.in.getUTCMinutes()).padStart(2,"0")}`,
       });
       const outRef = adminDb.collection("tv_companies").doc(companyId).collection("punchRecords").doc();
       batch.set(outRef, {
         uid: MOCK_UID, name: MOCK_NAME, email: MOCK_EMAIL,
         type: "out", timestamp: shift.out,
         date: shift.out.toISOString().slice(0, 10),
-        displayTime: shift.out.toLocaleTimeString("is-IS", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }),
+        displayTime: `${String(shift.out.getUTCHours()).padStart(2,"0")}:${String(shift.out.getUTCMinutes()).padStart(2,"0")}`,
       });
     }
     await batch.commit();
