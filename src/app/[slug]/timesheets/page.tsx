@@ -157,7 +157,7 @@ export default function TimesheetsPage() {
 
       <div className="container" style={{ padding: "24px 24px" }}>
         {/* Dev seed buttons */}
-        {isAdmin && process.env.NODE_ENV !== "production" && (
+        {isAdmin && (
           <div style={{ background: "rgba(255,184,48,0.1)", border: "1px solid rgba(255,184,48,0.3)", borderRadius: 10, padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: "0.8rem", color: "var(--warning)", fontWeight: 600 }}>🧪 Dev tools</span>
             <button onClick={() => doSeed(false)} disabled={seeding} style={{ fontSize: "0.82rem", padding: "5px 12px", borderRadius: 6, border: "none", background: "var(--brand)", color: "#fff", cursor: "pointer" }}>{seeding ? t.seeding : t.seedBtn}</button>

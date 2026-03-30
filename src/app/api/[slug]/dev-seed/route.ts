@@ -3,12 +3,8 @@ import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 
 // DEV ONLY — seed mock punch records for testing
-// POST /api/[slug]/dev-seed  (only works if NODE_ENV !== "production")
-
+// POST /api/[slug]/dev-seed  (admin/owner only)
 export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "Not available in production" }, { status: 403 });
-  }
 
   const { slug } = await params;
   const auth = req.headers.get("Authorization");
@@ -100,9 +96,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
-  if (process.env.NODE_ENV === "production") {
-    return NextResponse.json({ error: "Not available in production" }, { status: 403 });
-  }
   const { slug } = await params;
   const auth = req.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
