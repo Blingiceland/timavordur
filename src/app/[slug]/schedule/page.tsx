@@ -65,16 +65,23 @@ for (let h = 0; h < 24; h++) {
     TIME_OPTIONS.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
   }
 }
+// End-time options: 00:00→23:45 + 00:00→06:00 next day (stored as plain HH:MM, backend detects cross-midnight)
+const END_TIME_OPTIONS: { value: string; label: string }[] = [
+  ...TIME_OPTIONS.map(v => ({ value: v, label: v })),
+  ...[...Array(7)].flatMap((_, h) =>
+    [0, 15, 30, 45].map(m => ({ value: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`, label: `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")} (+1)` }))
+  ),
+];
 
-function Time24Select({ value, onChange, style }: { value: string; onChange: (v: string) => void; style?: React.CSSProperties }) {
-  // Snap to nearest 15-min slot if needed
-  const snapped = TIME_OPTIONS.includes(value) ? value : TIME_OPTIONS.reduce((best, opt) => {
+function Time24Select({ value, onChange, endTime }: { value: string; onChange: (v: string) => void; endTime?: boolean }) {
+  const opts = endTime ? END_TIME_OPTIONS : TIME_OPTIONS.map(v => ({ value: v, label: v }));
+  const snapped = opts.find(o => o.value === value) ? value : opts.reduce((best, o) => {
     const toMins = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-    return Math.abs(toMins(opt) - toMins(value)) < Math.abs(toMins(best) - toMins(value)) ? opt : best;
-  }, TIME_OPTIONS[0]);
+    return Math.abs(toMins(o.value) - toMins(value)) < Math.abs(toMins(best) - toMins(value)) ? o.value : best;
+  }, opts[0].value);
   return (
-    <select className="form-input" style={{ fontFamily: "monospace", ...style }} value={snapped} onChange={e => onChange(e.target.value)}>
-      {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+    <select className="form-input" style={{ fontFamily: "monospace" }} value={snapped} onChange={e => onChange(e.target.value)}>
+      {opts.map((o, i) => <option key={`${o.value}-${i}`} value={o.value}>{o.label}</option>)}
     </select>
   );
 }
@@ -369,7 +376,7 @@ export default function SchedulePage() {
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">{t.to}</label>
-                <Time24Select value={mTo} onChange={setMTo} />
+                <Time24Select value={mTo} onChange={setMTo} endTime />
               </div>
             </div>
 
