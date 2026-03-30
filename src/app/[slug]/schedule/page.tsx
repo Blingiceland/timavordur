@@ -58,6 +58,28 @@ function fmtWeekRange(s: Date, lang: Lang) {
   return `${s.toLocaleDateString(loc, o)} – ${e.toLocaleDateString(loc, { ...o, year: "numeric" })}`;
 }
 
+// Build 24h time options at 15-min intervals (00:00 → 23:45)
+const TIME_OPTIONS: string[] = [];
+for (let h = 0; h < 24; h++) {
+  for (const m of [0, 15, 30, 45]) {
+    TIME_OPTIONS.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+  }
+}
+
+function Time24Select({ value, onChange, style }: { value: string; onChange: (v: string) => void; style?: React.CSSProperties }) {
+  // Snap to nearest 15-min slot if needed
+  const snapped = TIME_OPTIONS.includes(value) ? value : TIME_OPTIONS.reduce((best, opt) => {
+    const toMins = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+    return Math.abs(toMins(opt) - toMins(value)) < Math.abs(toMins(best) - toMins(value)) ? opt : best;
+  }, TIME_OPTIONS[0]);
+  return (
+    <select className="form-input" style={{ fontFamily: "monospace", ...style }} value={snapped} onChange={e => onChange(e.target.value)}>
+      {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+    </select>
+  );
+}
+
+
 interface Shift {
   id: string; uid: string; name: string; date: string;
   startTime: string; endTime: string; notes: string;
@@ -343,11 +365,11 @@ export default function SchedulePage() {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">{t.from}</label>
-                <input type="time" className="form-input" style={{ fontFamily: "monospace" }} value={mFrom} onChange={e => setMFrom(e.target.value)} />
+                <Time24Select value={mFrom} onChange={setMFrom} />
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">{t.to}</label>
-                <input type="time" className="form-input" style={{ fontFamily: "monospace" }} value={mTo} onChange={e => setMTo(e.target.value)} />
+                <Time24Select value={mTo} onChange={setMTo} />
               </div>
             </div>
 
