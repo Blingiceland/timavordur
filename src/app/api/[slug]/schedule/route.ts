@@ -27,33 +27,86 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
     if (!meDoc.exists) return NextResponse.json({ error: "not_registered" }, { status: 403 });
-    const me = meDoc.data()!;
-    const myRole = me.role as string || "staff";
+    const myRole = (meDoc.data()!.role as string) || "staff";
     const isManager = ["manager", "admin", "owner"].includes(myRole);
 
     const url = new URL(req.url);
     const from = url.searchParams.get("from") || new Date().toISOString().slice(0, 10);
     const to = url.searchParams.get("to") || from;
 
-    let query = adminDb.collection("tv_companies").doc(company.id).collection("shifts")
-      .where("date", ">=", from)
-      .where("date", "<=", to)
-      .orderBy("date", "asc");
+    // 1. Fetch single/override shifts for the date range
+    let qry = adminDb.collection("tv_companies").doc(company.id).collection("shifts")
+      .where("date", ">=", from).where("date", "<=", to).orderBy("date", "asc");
+    if (!isManager) qry = qry.where("uid", "==", decoded.uid) as typeof qry;
+    const singleSnap = await qry.get();
+    const singleShifts = singleSnap.docs.map(d => ({ id: d.id, source: "single" as const, ...d.data() }));
 
-    // Staff only see their own shifts
-    if (!isManager) {
-      query = query.where("uid", "==", decoded.uid) as typeof query;
+    // 2. Fetch active templates
+    const tmplSnap = await adminDb.collection("tv_companies").doc(company.id)
+      .collection("shiftTemplates").where("active", "==", true).get();
+    const templates = tmplSnap.docs.map(d => ({ id: d.id, ...d.data() })) as {
+      id: string; uid: string; name: string; daysOfWeek: number[];
+      startTime: string; endTime: string; label: string;
+      hourlyRate: number; wageEstimate: number; totalHours: number;
+      activeFrom?: string; activeTo?: string;
+    }[];
+
+    // 3. Build set of "overridden" slots (uid+date) from singleShifts
+    const overriddenKeys = new Set(singleShifts.map(s => {
+      const sd = s as Record<string, unknown>;
+      return `${sd.uid}_${sd.date}`;
+    }));
+    const cancelledKeys = new Set(singleShifts
+      .filter(s => (s as Record<string, unknown>).status === "cancelled")
+      .map(s => { const sd = s as Record<string, unknown>; return `${sd.uid}_${sd.date}`; }));
+
+    // 4. Expand templates across date range
+    const templateShifts: Record<string, unknown>[] = [];
+    const cur = new Date(from + "T00:00:00Z");
+    const end = new Date(to + "T00:00:00Z");
+    while (cur <= end) {
+      const ymd = cur.toISOString().slice(0, 10);
+      const dow = cur.getUTCDay();
+      for (const tmpl of templates) {
+        if (!tmpl.daysOfWeek.includes(dow)) continue;
+        if (tmpl.activeFrom && ymd < tmpl.activeFrom) continue;
+        if (tmpl.activeTo && ymd > tmpl.activeTo) continue;
+        if (!isManager && tmpl.uid !== decoded.uid) continue;
+        const key = `${tmpl.uid}_${ymd}`;
+        if (cancelledKeys.has(key)) continue; // explicitly cancelled
+        if (overriddenKeys.has(key)) continue; // single shift takes precedence
+        templateShifts.push({
+          id: `tmpl_${tmpl.id}_${ymd}`,
+          templateId: tmpl.id,
+          source: "template",
+          uid: tmpl.uid, name: tmpl.name,
+          date: ymd, startTime: tmpl.startTime, endTime: tmpl.endTime,
+          notes: tmpl.label || "",
+          status: "scheduled",
+          wageEstimate: tmpl.wageEstimate || 0,
+          totalHours: tmpl.totalHours || 0,
+          hourlyRate: tmpl.hourlyRate || 0,
+        });
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
     }
 
-    const snap = await query.get();
-    const shifts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // 5. Merge: single shifts + template expansions, sort by date+name
+    const allShifts = [
+      ...singleShifts.filter(s => (s as Record<string, unknown>).status !== "cancelled"),
+      ...templateShifts,
+    ].sort((a, b) => {
+      const ad = a as Record<string, unknown>; const bd = b as Record<string, unknown>;
+      return String(ad.date) < String(bd.date) ? -1 : String(ad.date) > String(bd.date) ? 1 : 0;
+    });
 
-    return NextResponse.json({ shifts, myRole });
+    return NextResponse.json({ shifts: allShifts, myRole });
   } catch (err) {
     console.error("[schedule GET]", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
+
 
 // POST /api/[slug]/schedule — create shift (manager+)
 export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
