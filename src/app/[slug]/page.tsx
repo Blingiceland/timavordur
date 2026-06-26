@@ -5,7 +5,7 @@ import { auth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup, signInWithRedirect, signInWithCustomToken, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { useTheme } from "@/lib/theme";
 
-import type { FieldLevel, Lang, Tab, TeamMember, PortalData } from "./_portal/types";
+import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift } from "./_portal/types";
 import {
   roleLabel, roleColor, atLeast,
   ALL_REG_FIELDS, T,
@@ -24,6 +24,8 @@ export default function CompanyPortal() {
   const [punching, setPunching] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
+  // My upcoming shifts (clock tab)
+  const [myShifts, setMyShifts] = useState<PortalShift[]>([]);
   // Staff username/password sign-in
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loggingIn, setLoggingIn] = useState(false);
@@ -102,6 +104,21 @@ export default function CompanyPortal() {
   // staff after an admin signs out) may not have access to the previously selected
   // tab, and single-tab staff have no tab bar to switch back with.
   useEffect(() => { setTab("clock"); }, [user?.uid]);
+
+  // Fetch the signed-in user's own upcoming shifts (next 3 weeks) for the clock tab.
+  const fetchMyShifts = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const from = new Date().toISOString().slice(0, 10);
+      const to = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
+      const res = await fetch(`/api/${slug}/schedule?from=${from}&to=${to}`, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json();
+      if (res.ok) setMyShifts((d.shifts || []).filter((s: PortalShift) => s.uid === user.uid));
+    } catch { /* non-critical */ }
+  }, [user, slug]);
+
+  useEffect(() => { if (user && portal?.status === "approved") fetchMyShifts(); }, [user, portal?.status, fetchMyShifts]);
 
   const showMsg = (text: string, ok = true) => { setMsg({ text, ok }); setTimeout(() => setMsg(null), 4000); };
 
@@ -423,6 +440,25 @@ export default function CompanyPortal() {
                 <div key={l} style={{ textAlign: "center" }}><div style={{ fontSize: "1.8rem", color: c, fontWeight: 700 }}>{v}</div><div className="text-muted" style={{ fontSize: "0.82rem" }}>{l}</div></div>
               ))}
             </div>
+            {myShifts.length > 0 && (
+              <div className="card" style={{ width: "100%", maxWidth: 440, padding: "16px 20px" }}>
+                <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
+                  🗓 {lang === "is" ? "Mínar vaktir" : "My shifts"}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {myShifts.map(sh => {
+                    const nextDay = sh.endTime <= sh.startTime;
+                    const label = new Date(sh.date + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+                    return (
+                      <div key={sh.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "9px 14px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                        <span style={{ fontSize: "0.9rem", fontWeight: 500, textTransform: "capitalize" }}>{label}</span>
+                        <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)", fontFamily: "monospace" }}>{sh.startTime}–{sh.endTime}{nextDay ? " (+1)" : ""}{sh.notes ? ` · ${sh.notes}` : ""}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
               <a href={`/${slug}/timesheets`} className="btn btn--secondary btn--sm">📊 {lang === "is" ? "Tímaskýrslur" : "Timesheets"}</a>
               {canSeeTeam && <a href={`/${slug}/schedule`} className="btn btn--secondary btn--sm">🗓 {lang === "is" ? "Vaktaplan" : "Schedule"}</a>}

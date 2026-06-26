@@ -31,6 +31,16 @@ export interface TeamMember {
   addedAt?: string;
 }
 
+export interface PortalShift {
+  id: string;
+  uid: string;
+  date: string;       // YYYY-MM-DD
+  startTime: string;  // HH:MM
+  endTime: string;    // HH:MM
+  notes?: string;
+  source?: string;    // "single" | "template"
+}
+
 export interface PortalData {
   registered: boolean;
   status?: Status;
