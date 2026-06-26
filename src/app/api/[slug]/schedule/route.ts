@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { calculateWage } from "@/lib/wage-calculator";
+import { isDate, isTime } from "@/lib/validation";
 
 async function verifyToken(req: NextRequest) {
   const auth = req.headers.get("Authorization");
@@ -127,6 +128,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     const { uid, date, startTime, endTime, notes } = body;
     if (!uid || !date || !startTime || !endTime) {
       return NextResponse.json({ error: "uid, date, startTime, endTime required" }, { status: 400 });
+    }
+    if (!isDate(date) || !isTime(startTime) || !isTime(endTime)) {
+      return NextResponse.json({ error: "Ógild dagsetning (YYYY-MM-DD) eða tími (HH:MM)" }, { status: 400 });
     }
 
     // Fetch staff for name + wage rate

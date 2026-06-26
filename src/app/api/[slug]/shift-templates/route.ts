@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { calculateWage } from "@/lib/wage-calculator";
+import { isTime, isDaysOfWeek, isDate } from "@/lib/validation";
 
 async function verifyToken(req: NextRequest) {
   const auth = req.headers.get("Authorization");
@@ -47,6 +48,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     const { uid, daysOfWeek, startTime, endTime, label, activeFrom, activeTo } = body;
     if (!uid || !daysOfWeek?.length || !startTime || !endTime) {
       return NextResponse.json({ error: "uid, daysOfWeek, startTime, endTime required" }, { status: 400 });
+    }
+    if (!isDaysOfWeek(daysOfWeek) || !isTime(startTime) || !isTime(endTime)) {
+      return NextResponse.json({ error: "Ógildir vikudagar (0–6) eða tími (HH:MM)" }, { status: 400 });
+    }
+    if ((activeFrom && !isDate(activeFrom)) || (activeTo && !isDate(activeTo))) {
+      return NextResponse.json({ error: "Ógild dagsetning (YYYY-MM-DD)" }, { status: 400 });
     }
 
     const staffDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(uid).get();

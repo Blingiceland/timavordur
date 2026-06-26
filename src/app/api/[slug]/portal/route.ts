@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomBytes } from "crypto";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { calculateWage } from "@/lib/wage-calculator";
+import { hashPassword } from "@/lib/password";
+import { isUsername, isPin, cleanStr } from "@/lib/validation";
 
 // ── Role system ────────────────────────────────────────────────────────────
 export type Role = "staff" | "manager" | "admin" | "owner";
@@ -76,9 +79,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     // ── Approved — build punch stats ─────────────────────────────────────────
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    // Pay period runs the 25th → 24th. Period start is the 25th of this month if
+    // we're on/after the 25th, otherwise the 25th of last month.
     const periodStart = new Date();
-    periodStart.setDate(periodStart.getDate() >= 25 ? 25 : 25);
-    if (new Date().getDate() < 25) periodStart.setMonth(periodStart.getMonth() - 1);
+    if (periodStart.getDate() < 25) periodStart.setMonth(periodStart.getMonth() - 1);
+    periodStart.setDate(25);
     periodStart.setHours(0, 0, 0, 0);
 
     const [lastPunchSnap, todaySnap, periodSnap] = await Promise.all([
@@ -119,7 +124,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       if (atLeast(role, "admin")) {
         const fullStaff = await Promise.all(staffSnap.docs.map(async (doc) => {
           const m = doc.data();
-          return { uid: doc.id, name: m.name, email: m.email, role: m.role || "staff", status: m.status || "approved", ssn: m.ssn || "", phone: m.phone || "", address: m.address || "", bankName: m.bankName || "", bankAccount: m.bankAccount || "", union: m.union || "", pension: m.pension || "", workPermit: m.workPermit ?? null, workPermitExpiry: m.workPermitExpiry || "", jobTitle: m.jobTitle || "", employmentType: m.employmentType || "", language: m.language || "is", addedAt: toStr(m.addedAt || m.registeredAt) };
+          return { uid: doc.id, name: m.name, email: m.email || "", username: m.username || "", authType: m.authType || "", role: m.role || "staff", status: m.status || "approved", ssn: m.ssn || "", phone: m.phone || "", address: m.address || "", bankName: m.bankName || "", bankAccount: m.bankAccount || "", union: m.union || "", pension: m.pension || "", workPermit: m.workPermit ?? null, workPermitExpiry: m.workPermitExpiry || "", jobTitle: m.jobTitle || "", employmentType: m.employmentType || "", payType: m.payType || "hourly", hourlyRate: m.hourlyRate || 0, monthlyRate: m.monthlyRate || 0, collectiveAgreement: m.collectiveAgreement || "efling_sa", language: m.language || "is", addedAt: toStr(m.addedAt || m.registeredAt) };
         }));
         return NextResponse.json({ ...base, team, staffList: fullStaff, registrationFields: company.registrationFields, requireApproval: company.requireApproval, ipRestriction: company.ipRestriction });
       }
@@ -224,7 +229,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
     }
     if (action === "approve") { await targetRef.update({ status: "approved", approvedAt: new Date().toISOString(), approvedBy: decoded.email }); return NextResponse.json({ ok: true }); }
     if (action === "reject") { await targetRef.update({ status: "rejected", rejectedAt: new Date().toISOString(), rejectedBy: decoded.email }); return NextResponse.json({ ok: true }); }
-    if (action === "update" && updates) { await targetRef.update({ ...updates, updatedAt: new Date().toISOString() }); return NextResponse.json({ ok: true }); }
+    if (action === "update" && updates) {
+      const safe: Record<string, unknown> = { ...updates };
+      // Password reset (never store plaintext)
+      if (typeof safe.password === "string" && safe.password.length > 0) {
+        if (!isPin(safe.password)) return NextResponse.json({ error: "PIN verður að vera 4 tölustafir" }, { status: 400 });
+        const { hash, salt } = hashPassword(safe.password);
+        safe.passwordHash = hash; safe.passwordSalt = salt; safe.authType = "password";
+      }
+      delete safe.password;
+      // Username change (validate + unique within company)
+      if (safe.username !== undefined) {
+        const uname = String(safe.username).trim().toLowerCase();
+        if (!isUsername(uname)) return NextResponse.json({ error: "Ógilt notendanafn" }, { status: 400 });
+        const dup = await adminDb.collection("tv_companies").doc(company.id).collection("staff").where("username", "==", uname).limit(1).get();
+        if (!dup.empty && dup.docs[0].id !== uid) return NextResponse.json({ error: "Notendanafn er þegar í notkun" }, { status: 409 });
+        safe.username = uname;
+      }
+      await targetRef.update({ ...safe, updatedAt: new Date().toISOString() });
+      return NextResponse.json({ ok: true });
+    }
     if (action === "delete") { await targetRef.delete(); return NextResponse.json({ ok: true }); }
 
     return NextResponse.json({ error: "Óþekkt aðgerð" }, { status: 400 });
@@ -248,24 +272,35 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ slug
     if (!atLeast((myDoc.data()?.role || "staff") as Role, "admin")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     const body = await req.json();
-    if (!body.email) return NextResponse.json({ error: "Email vantar" }, { status: 400 });
+    const username = typeof body.username === "string" ? body.username.trim().toLowerCase() : "";
+    const password = typeof body.password === "string" ? body.password : "";
+    if (!isUsername(username)) return NextResponse.json({ error: "Ógilt notendanafn (3–30 stafir: a–z, 0–9, . _ -)" }, { status: 400 });
+    if (!isPin(password)) return NextResponse.json({ error: "PIN verður að vera 4 tölustafir" }, { status: 400 });
 
-    let uid: string;
-    try { const u = await adminAuth.getUserByEmail(body.email); uid = u.uid; }
-    catch { return NextResponse.json({ error: "Notandinn þarf fyrst að skrá sig inn með Google á síðuna." }, { status: 404 }); }
+    // Username must be unique within the company
+    const dup = await adminDb.collection("tv_companies").doc(company.id).collection("staff").where("username", "==", username).limit(1).get();
+    if (!dup.empty) return NextResponse.json({ error: "Notendanafn er þegar í notkun" }, { status: 409 });
 
     const staffRole: Role = body.role && ["staff", "manager", "admin", "owner"].includes(body.role) ? body.role : "staff";
+    const { hash, salt } = hashPassword(password);
+    const uid = "pw_" + randomBytes(12).toString("hex");
+    const num = (v: unknown) => (typeof v === "number" ? v : parseInt(String(v)) || 0);
 
     await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(uid).set({
-      uid, email: body.email, name: body.name || body.email.split("@")[0],
+      uid, username, authType: "password", passwordHash: hash, passwordSalt: salt,
+      name: cleanStr(body.name) || username,
       role: staffRole, status: "approved",
-      ssn: body.ssn || "", phone: body.phone || "", address: body.address || "",
-      bankName: body.bankName || "", bankAccount: body.bankAccount || "",
-      union: body.union || "", pension: body.pension || "",
-      workPermit: body.workPermit ?? null, workPermitExpiry: body.workPermitExpiry || "",
-      jobTitle: body.jobTitle || "", employmentType: body.employmentType || "",
-      addedAt: FieldValue.serverTimestamp(), addedBy: decoded.email, registeredSelf: false, language: "is",
-    }, { merge: true });
+      ssn: cleanStr(body.ssn, 11), phone: cleanStr(body.phone, 30), address: cleanStr(body.address),
+      bankName: cleanStr(body.bankName, 80), bankAccount: cleanStr(body.bankAccount, 30),
+      union: cleanStr(body.union, 80), pension: cleanStr(body.pension, 80),
+      workPermit: typeof body.workPermit === "boolean" ? body.workPermit : null,
+      workPermitExpiry: cleanStr(body.workPermitExpiry, 20),
+      jobTitle: cleanStr(body.jobTitle, 80), employmentType: cleanStr(body.employmentType, 40),
+      payType: body.payType || "hourly",
+      hourlyRate: num(body.hourlyRate), monthlyRate: num(body.monthlyRate),
+      collectiveAgreement: body.collectiveAgreement || "efling_sa",
+      addedAt: FieldValue.serverTimestamp(), addedBy: decoded.email || decoded.uid, registeredSelf: false, language: "is",
+    });
 
     return NextResponse.json({ ok: true, uid });
   } catch (err) {

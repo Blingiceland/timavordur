@@ -8,7 +8,14 @@ export async function POST(req: NextRequest) {
   // Öryggislykill til að koma í veg fyrir óleyfilega notkun
   const { secret, email, name } = await req.json();
 
-  const SETUP_SECRET = process.env.SETUP_SECRET || "timavordur-setup-2024";
+  const SETUP_SECRET = process.env.SETUP_SECRET;
+  // Refuse to run unless an explicit secret is configured — no weak default.
+  if (!SETUP_SECRET) {
+    return NextResponse.json(
+      { error: "SETUP_SECRET er ekki stillt á þjóninum — bootstrap óvirkur." },
+      { status: 503 }
+    );
+  }
 
   if (secret !== SETUP_SECRET) {
     return NextResponse.json({ error: "Leynileg" }, { status: 403 });

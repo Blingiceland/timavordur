@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
-import type { Company } from "@/app/api/companies/route";
+import type { Company } from "@/lib/types";
 
 interface SuperAdminUser {
   uid: string;
@@ -20,7 +20,7 @@ export default function SuperAdminPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
-  const [newForm, setNewForm] = useState({ name: "", slug: "", adminEmail: "" });
+  const [newForm, setNewForm] = useState({ name: "", slug: "", adminEmail: "", kennitala: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [editCompany, setEditCompany] = useState<Company | null>(null);
@@ -101,10 +101,12 @@ export default function SuperAdminPage() {
     finally { setEditSaving(false); }
   };
 
-  const fetchCompanies = useCallback(async () => {
+  const fetchCompanies = useCallback(async (token: string) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/companies");
+      const res = await fetch("/api/companies", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await res.json();
       setCompanies(data.companies || []);
     } catch {
@@ -115,18 +117,22 @@ export default function SuperAdminPage() {
   }, []);
 
   useEffect(() => {
-    if (authChecked) fetchCompanies();
-  }, [authChecked, fetchCompanies]);
+    if (authChecked && superAdmin) fetchCompanies(superAdmin.token);
+  }, [authChecked, superAdmin, fetchCompanies]);
 
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!superAdmin) return;
     setSaving(true);
     setError("");
     try {
       const res = await fetch("/api/companies", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${superAdmin.token}`,
+        },
         body: JSON.stringify(newForm),
       });
       const data = await res.json();
@@ -134,7 +140,7 @@ export default function SuperAdminPage() {
         setError(data.error || "Villa við að vista");
       } else {
         setCompanies((prev) => [data, ...prev]);
-        setNewForm({ name: "", slug: "", adminEmail: "" });
+        setNewForm({ name: "", slug: "", adminEmail: "", kennitala: "" });
         setShowNew(false);
       }
     } catch {
@@ -273,6 +279,15 @@ export default function SuperAdminPage() {
                     value={newForm.adminEmail}
                     onChange={(e) => setNewForm({ ...newForm, adminEmail: e.target.value })}
                     required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Kennitala (valfrjálst)</label>
+                  <input
+                    className="form-input"
+                    placeholder="000000-0000"
+                    value={newForm.kennitala}
+                    onChange={(e) => setNewForm({ ...newForm, kennitala: e.target.value })}
                   />
                 </div>
               </div>
