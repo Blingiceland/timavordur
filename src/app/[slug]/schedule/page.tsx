@@ -181,7 +181,7 @@ export default function SchedulePage() {
       } finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [user, slug, weekStart, reloadKey]);
 
   const saveShift = async () => {

@@ -2,51 +2,16 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { auth, googleProvider } from "@/lib/firebase";
-import { signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
+import { signInWithPopup, signInWithRedirect, signInWithCustomToken, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { useTheme } from "@/lib/theme";
 
-type Role = "staff" | "manager" | "admin" | "owner";
-type Status = "pending" | "approved" | "rejected";
-type FieldLevel = "required" | "optional" | "hidden";
-
-interface TeamMember { uid: string; name: string; email: string; role: Role; status: Status; isPunchedIn: boolean; todayHours: number; ssn?: string; phone?: string; address?: string; bankName?: string; bankAccount?: string; union?: string; pension?: string; workPermit?: boolean | null; workPermitExpiry?: string; jobTitle?: string; employmentType?: string; addedAt?: string; }
-interface PortalData { registered: boolean; status?: Status; role?: Role; name?: string; companyName?: string; isPunchedIn?: boolean; todayHours?: number; periodHours?: number; shifts?: number; team?: TeamMember[]; staffList?: TeamMember[]; registrationFields?: Record<string, FieldLevel>; requireApproval?: boolean; }
-
-const ROLES: { key: Role; labelIs: string; labelEn: string; color: string }[] = [
-  { key: "staff", labelIs: "Starfsmaður", labelEn: "Staff", color: "var(--text-secondary)" },
-  { key: "manager", labelIs: "Vaktstjóri", labelEn: "Manager", color: "var(--brand-light)" },
-  { key: "admin", labelIs: "Stjórnandi", labelEn: "Admin", color: "var(--accent)" },
-  { key: "owner", labelIs: "Eigandi", labelEn: "Owner", color: "#f0a500" },
-];
-const roleLabel = (r: Role, lang: "is" | "en") => ROLES.find(x => x.key === r)?.[lang === "is" ? "labelIs" : "labelEn"] || r;
-const roleColor = (r: Role) => ROLES.find(x => x.key === r)?.color || "var(--text-secondary)";
-const atLeast = (role: Role, min: Role) => ({ staff: 1, manager: 2, admin: 3, owner: 4 }[role] >= { staff: 1, manager: 2, admin: 3, owner: 4 }[min]);
-
-const ALL_REG_FIELDS = [
-  { key: "name", is: "Fullt nafn", en: "Full name", ph_is: "Jón Jónsson", ph_en: "John Smith" },
-  { key: "ssn", is: "Kennitala", en: "ID number", ph_is: "1234567890", ph_en: "1234567890", pattern: "[0-9]{10}", maxLength: 10 },
-  { key: "phone", is: "Símanúmer", en: "Phone", ph_is: "8001234", ph_en: "+354 800 1234" },
-  { key: "address", is: "Heimilisfang", en: "Address", ph_is: "Laugavegur 1, 101 Reykjavík", ph_en: "1 Main St, Reykjavík" },
-  { key: "bankName", is: "Banki", en: "Bank", ph_is: "Íslandsbanki", ph_en: "Íslandsbanki" },
-  { key: "bankAccount", is: "Reikningsnúmer", en: "Account no.", ph_is: "0111-26-123456", ph_en: "0111-26-123456" },
-  { key: "union", is: "Stéttarfélag", en: "Union", ph_is: "VR", ph_en: "VR" },
-  { key: "pension", is: "Lífeyrissjóður", en: "Pension fund", ph_is: "Gildi", ph_en: "Gildi" },
-  { key: "jobTitle", is: "Starfsheiti", en: "Job title", ph_is: "Barþjónn", ph_en: "Bartender" },
-];
-
-const T = {
-  is: { loading: "Hleður...", signIn: "Innskrá með Google", signOut: "Útskrá", langBtn: "🇮🇸", punchIn: "KLUKKA INN", punchOut: "KLUKKA ÚT", today: "Í dag", period: "Þetta tímabil", shifts: "Vaktir", pending: "Skráning í bið", pendingMsg: "Stjórnandi þarf að samþykkja þig.", rejected: "Skráningu hafnað", rejectedMsg: "Hafðu samband við stjórnanda.", tabClock: "Klukka", tabTeam: "Lið", tabStaff: "Starfsmenn", tabSettings: "Stillingar", regTitle: "Nýskráning", regBtn: "Senda", required: "skyldulegt", statusIn: "● Inni", statusOut: "○ Úti", approve: "✓ Samþykkja", reject: "✕ Hafna", edit: "Breyta", delete: "Eyða", addStaff: "+ Bæta við", saveRole: "Vista hlutverk", role: "Hlutverk", save: "Vista", saving: "Vista...", saved: "✅ Vistað!" },
-  en: { loading: "Loading...", signIn: "Sign in with Google", signOut: "Sign out", langBtn: "🇬🇧", punchIn: "CLOCK IN", punchOut: "CLOCK OUT", today: "Today", period: "This period", shifts: "Shifts", pending: "Registration pending", pendingMsg: "Waiting for manager approval.", rejected: "Registration rejected", rejectedMsg: "Please contact your manager.", tabClock: "Clock", tabTeam: "Team", tabStaff: "Staff", tabSettings: "Settings", regTitle: "Registration", regBtn: "Submit", required: "required", statusIn: "● In", statusOut: "○ Out", approve: "✓ Approve", reject: "✕ Reject", edit: "Edit", delete: "Delete", addStaff: "+ Add staff", saveRole: "Save role", role: "Role", save: "Save", saving: "Saving...", saved: "✅ Saved!" },
-};
-
-type Lang = "is" | "en";
-type Tab = "clock" | "team" | "staff" | "settings";
-
-const EMPTY_REG: Record<string, string> = { name: "", ssn: "", phone: "", address: "", bankName: "", bankAccount: "", union: "", pension: "", jobTitle: "", workPermit: "", workPermitExpiry: "", employmentType: "" };
-const EMPTY_STAFF: Partial<TeamMember> = { name: "", email: "", ssn: "", phone: "", address: "", bankName: "", bankAccount: "", union: "", pension: "", jobTitle: "", employmentType: "", role: "staff" };
-const REG_FIELDS_DEFAULTS: Record<string, FieldLevel> = { name: "required", ssn: "optional", phone: "optional", address: "optional", bankName: "optional", bankAccount: "optional", union: "optional", pension: "optional", jobTitle: "optional", workPermit: "optional", workPermitExpiry: "optional", employmentType: "optional" };
-const ALL_REG_FIELD_KEYS = ["name", "ssn", "phone", "address", "bankName", "bankAccount", "union", "pension", "workPermit", "workPermitExpiry", "jobTitle", "employmentType"];
-const ALL_REG_FIELD_LABELS: Record<string, [string, string]> = { name: ["Fullt nafn","Full name"], ssn: ["Kennitala","ID number"], phone: ["Símanúmer","Phone"], address: ["Heimilisfang","Address"], bankName: ["Banki","Bank"], bankAccount: ["Reikningsnúmer","Account no."], union: ["Stéttarfélag","Union"], pension: ["Lífeyrissjóður","Pension fund"], workPermit: ["Vinnuleyfi","Work permit"], workPermitExpiry: ["Vinnuleyfi gildir til","Permit expiry"], jobTitle: ["Starfsheiti","Job title"], employmentType: ["Ráðningarstig","Employment type"] };
+import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift } from "./_portal/types";
+import {
+  roleLabel, roleColor, atLeast,
+  ALL_REG_FIELDS, T,
+  EMPTY_REG, EMPTY_STAFF, REG_FIELDS_DEFAULTS, ALL_REG_FIELD_KEYS, ALL_REG_FIELD_LABELS,
+} from "./_portal/constants";
+import { StaffFormFields } from "./_portal/StaffFormFields";
 
 export default function CompanyPortal() {
   const { slug } = useParams() as { slug: string };
@@ -59,6 +24,12 @@ export default function CompanyPortal() {
   const [punching, setPunching] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
+  // My upcoming shifts (clock tab)
+  const [myShifts, setMyShifts] = useState<PortalShift[]>([]);
+  // Staff username/password sign-in
+  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [loginError, setLoginError] = useState("");
   // Registration
   const [regForm, setRegForm] = useState<Record<string, string>>(EMPTY_REG);
   const [regSubmitting, setRegSubmitting] = useState(false);
@@ -83,6 +54,23 @@ export default function CompanyPortal() {
   }, [slug]);
 
   const chooseLang = (l: Lang) => { setLang(l); localStorage.setItem(`tv_lang_${slug}`, l); };
+
+  const doStaffLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoggingIn(true);
+    setLoginError("");
+    try {
+      const res = await fetch(`/api/${slug}/staff/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginForm.username, password: loginForm.password }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setLoginError(d.error || (lang === "en" ? "Login failed" : "Innskráning mistókst")); return; }
+      await signInWithCustomToken(auth, d.token); // onAuthStateChanged → fetchPortal
+    } catch { setLoginError(lang === "en" ? "Network error" : "Netvilla"); }
+    finally { setLoggingIn(false); }
+  };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, u => { setUser(u); setAuthLoading(false); });
@@ -111,6 +99,26 @@ export default function CompanyPortal() {
   }, [user, slug]);
 
   useEffect(() => { if (user) fetchPortal(); }, [user, fetchPortal]);
+
+  // Reset to the clock tab whenever the signed-in user changes. A new user (e.g.
+  // staff after an admin signs out) may not have access to the previously selected
+  // tab, and single-tab staff have no tab bar to switch back with.
+  useEffect(() => { setTab("clock"); }, [user?.uid]);
+
+  // Fetch the signed-in user's own upcoming shifts (next 3 weeks) for the clock tab.
+  const fetchMyShifts = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const from = new Date().toISOString().slice(0, 10);
+      const to = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
+      const res = await fetch(`/api/${slug}/schedule?from=${from}&to=${to}`, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json();
+      if (res.ok) setMyShifts((d.shifts || []).filter((s: PortalShift) => s.uid === user.uid));
+    } catch { /* non-critical */ }
+  }, [user, slug]);
+
+  useEffect(() => { if (user && portal?.status === "approved") fetchMyShifts(); }, [user, portal?.status, fetchMyShifts]);
 
   const showMsg = (text: string, ok = true) => { setMsg({ text, ok }); setTimeout(() => setMsg(null), 4000); };
 
@@ -224,17 +232,39 @@ export default function CompanyPortal() {
   if (!user) return (
     <div className="page" style={{ minHeight: "100vh" }}><Navbar />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "calc(100vh - 64px)" }}>
-        <div className="card" style={{ maxWidth: "400px", width: "100%", padding: "48px", textAlign: "center" }}>
-          <div style={{ fontSize: "3rem", marginBottom: "16px" }}>⏱</div>
-          <h2 style={{ fontSize: "1.4rem", marginBottom: "8px" }}>{portal?.companyName || "Tímavörður"}</h2>
-          <p className="text-secondary" style={{ fontSize: "0.9rem", marginBottom: "32px" }}>{lang === "is" ? "Skráðu þig inn til að halda áfram" : "Sign in to continue"}</p>
+        <div className="card" style={{ maxWidth: "400px", width: "100%", padding: "40px" }}>
+          <div style={{ textAlign: "center", marginBottom: "24px" }}>
+            <div style={{ fontSize: "3rem", marginBottom: "8px" }}>⏱</div>
+            <h2 style={{ fontSize: "1.4rem" }}>{portal?.companyName || "Tímavörður"}</h2>
+            <p className="text-secondary" style={{ fontSize: "0.9rem", marginTop: "4px" }}>{lang === "is" ? "Skráðu þig inn til að halda áfram" : "Sign in to continue"}</p>
+          </div>
+
+          {loginError && <div style={{ background: "rgba(255,77,106,0.1)", border: "1px solid rgba(255,77,106,0.3)", borderRadius: "var(--radius-md)", padding: "10px 14px", color: "var(--danger)", marginBottom: "14px", fontSize: "0.85rem" }}>⚠️ {loginError}</div>}
+
+          <form onSubmit={doStaffLogin} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div className="form-group">
+              <label className="form-label">{lang === "is" ? "Notendanafn" : "Username"}</label>
+              <input className="form-input" autoCapitalize="none" autoCorrect="off" placeholder={lang === "is" ? "notendanafn" : "username"} value={loginForm.username} onChange={e => setLoginForm(f => ({ ...f, username: e.target.value }))} required />
+            </div>
+            <div className="form-group">
+              <label className="form-label">PIN</label>
+              <input type="password" inputMode="numeric" maxLength={4} className="form-input" placeholder="••••" value={loginForm.password} onChange={e => setLoginForm(f => ({ ...f, password: e.target.value.replace(/\D/g, "") }))} required />
+            </div>
+            <button type="submit" className="btn btn--primary" style={{ width: "100%", justifyContent: "center", padding: "12px", fontSize: "1rem" }} disabled={loggingIn}>{loggingIn ? "..." : (lang === "is" ? "Skrá inn" : "Sign in")}</button>
+          </form>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "20px 0 14px" }}>
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+            <span className="text-muted" style={{ fontSize: "0.75rem" }}>{lang === "is" ? "Stjórnandi?" : "Admin?"}</span>
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
+          </div>
           <button onClick={() => {
             const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
             if (isSafari) { signInWithRedirect(auth, googleProvider); }
             else { signInWithPopup(auth, googleProvider); }
-          }} className="btn btn--primary" style={{ width: "100%", justifyContent: "center", gap: "12px", fontSize: "1rem" }}>
-            <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-            {t.signIn}
+          }} className="btn btn--secondary" style={{ width: "100%", justifyContent: "center", gap: "10px" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+            {lang === "is" ? "Skrá inn með Google" : "Sign in with Google"}
           </button>
         </div>
       </div>
@@ -410,6 +440,25 @@ export default function CompanyPortal() {
                 <div key={l} style={{ textAlign: "center" }}><div style={{ fontSize: "1.8rem", color: c, fontWeight: 700 }}>{v}</div><div className="text-muted" style={{ fontSize: "0.82rem" }}>{l}</div></div>
               ))}
             </div>
+            {myShifts.length > 0 && (
+              <div className="card" style={{ width: "100%", maxWidth: 440, padding: "16px 20px" }}>
+                <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
+                  🗓 {lang === "is" ? "Mínar vaktir" : "My shifts"}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {myShifts.map(sh => {
+                    const nextDay = sh.endTime <= sh.startTime;
+                    const label = new Date(sh.date + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+                    return (
+                      <div key={sh.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "9px 14px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                        <span style={{ fontSize: "0.9rem", fontWeight: 500, textTransform: "capitalize" }}>{label}</span>
+                        <span style={{ fontSize: "0.9rem", color: "var(--text-secondary)", fontFamily: "monospace" }}>{sh.startTime}–{sh.endTime}{nextDay ? " (+1)" : ""}{sh.notes ? ` · ${sh.notes}` : ""}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
               <a href={`/${slug}/timesheets`} className="btn btn--secondary btn--sm">📊 {lang === "is" ? "Tímaskýrslur" : "Timesheets"}</a>
               {canSeeTeam && <a href={`/${slug}/schedule`} className="btn btn--secondary btn--sm">🗓 {lang === "is" ? "Vaktaplan" : "Schedule"}</a>}
@@ -450,7 +499,7 @@ export default function CompanyPortal() {
                   {staffAll.length === 0 ? <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--text-muted)", padding: "32px" }}>{lang === "is" ? "Enginn starfsmaður" : "No staff yet"}</td></tr>
                     : staffAll.map(s => (
                       <tr key={s.uid}>
-                        <td><div style={{ fontWeight: 500 }}>{s.name}</div><div className="text-muted" style={{ fontSize: "0.78rem" }}>{s.email}</div></td>
+                        <td><div style={{ fontWeight: 500 }}>{s.name}</div><div className="text-muted" style={{ fontSize: "0.78rem" }}>{s.username ? `@${s.username}` : s.email}</div></td>
                         <td><span style={{ color: roleColor(s.role), fontSize: "0.85rem" }}>{roleLabel(s.role, lang)}</span></td>
                         <td>{s.status === "pending" ? <span className="badge" style={{ background: "rgba(255,180,0,0.15)", color: "#f0a500", border: "1px solid rgba(255,180,0,0.3)" }}>⏳ {lang === "is" ? "Í bið" : "Pending"}</span> : s.status === "rejected" ? <span className="badge badge--danger">✕</span> : <span className="badge badge--success">✓</span>}</td>
                         <td>
@@ -515,6 +564,21 @@ export default function CompanyPortal() {
               <h2 style={{ fontSize: "1.1rem" }}>{lang === "is" ? "Breyta" : "Edit"}: {editMember.name}</h2>
               <button className="btn btn--ghost btn--sm" onClick={() => setEditMember(null)}>✕</button>
             </div>
+            <div style={{ background: "var(--bg-surface)", borderRadius: "var(--radius-md)", padding: "12px", marginBottom: "12px" }}>
+              <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "8px" }}>
+                🔑 {lang === "is" ? "Innskráning — notendanafn + PIN" : "Login — username + PIN"}
+              </div>
+              <div style={{ display: "flex", gap: "12px" }}>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">{lang === "is" ? "Notendanafn" : "Username"}</label>
+                  <input className="form-input" autoCapitalize="none" placeholder={lang === "is" ? "t.d. anna" : "e.g. anna"} value={editForm.username || ""} onChange={e => setEditForm(f => ({ ...f, username: e.target.value.toLowerCase() }))} />
+                </div>
+                <div className="form-group" style={{ flex: 1 }}>
+                  <label className="form-label">{editMember.authType === "password" ? (lang === "is" ? "Nýr PIN" : "New PIN") : "PIN"}</label>
+                  <input type="text" inputMode="numeric" maxLength={4} className="form-input" placeholder={editMember.authType === "password" ? (lang === "is" ? "(óbreytt ef tómt)" : "(unchanged if blank)") : (lang === "is" ? "4 tölustafir" : "4 digits")} value={editForm.password || ""} onChange={e => setEditForm(f => ({ ...f, password: e.target.value.replace(/\D/g, "") }))} />
+                </div>
+              </div>
+            </div>
             <StaffFormFields form={editForm} onChange={setEditForm} lang={lang} isOwner={isOwner} />
             <div style={{ display: "flex", gap: "8px", marginTop: "16px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
               <button className="btn btn--primary" style={{ flex: 1, justifyContent: "center" }} disabled={saving} onClick={() => doPortalAction("PATCH", { uid: editMember.uid, action: "update", updates: editForm }, "✅ Vistað!")}>{saving ? t.saving : t.save}</button>
@@ -532,9 +596,15 @@ export default function CompanyPortal() {
               <h2 style={{ fontSize: "1.1rem" }}>{lang === "is" ? "Bæta við starfsmanni" : "Add staff member"}</h2>
               <button className="btn btn--ghost btn--sm" onClick={() => setShowAdd(false)}>✕</button>
             </div>
-            <div className="form-group" style={{ marginBottom: "14px" }}>
-              <label className="form-label">Netfang / Email *</label>
-              <input className="form-input" placeholder="jon@dillon.is" value={addForm.email || ""} onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))} required />
+            <div style={{ display: "flex", gap: "12px", marginBottom: "14px" }}>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">{lang === "is" ? "Notendanafn" : "Username"} *</label>
+                <input className="form-input" autoCapitalize="none" placeholder={lang === "is" ? "t.d. anna" : "e.g. anna"} value={addForm.username || ""} onChange={e => setAddForm(f => ({ ...f, username: e.target.value.toLowerCase() }))} required />
+              </div>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">PIN *</label>
+                <input type="text" inputMode="numeric" maxLength={4} className="form-input" placeholder={lang === "is" ? "4 tölustafir" : "4 digits"} value={addForm.password || ""} onChange={e => setAddForm(f => ({ ...f, password: e.target.value.replace(/\D/g, "") }))} required />
+              </div>
             </div>
             <StaffFormFields form={addForm} onChange={setAddForm} lang={lang} isOwner={isOwner} />
             <button className="btn btn--primary" style={{ width: "100%", justifyContent: "center", marginTop: "16px" }} disabled={saving} onClick={() => doPortalAction("PUT", addForm, "✅ Starfsmaður bætt við!")}>{saving ? t.saving : lang === "is" ? "Bæta við" : "Add"}</button>
@@ -545,87 +615,6 @@ export default function CompanyPortal() {
   );
 }
 
-function StaffFormFields({ form, onChange, lang, isOwner }: { form: Partial<TeamMember>; onChange: (v: Partial<TeamMember>) => void; lang: Lang; isOwner: boolean }) {
-  const fields: [keyof TeamMember, string, string, string][] = [
-    ["name", "Fullt nafn", "Full name", "Jón Jónsson"],
-    ["ssn", "Kennitala", "ID number", "1234567890"],
-    ["phone", "Símanúmer", "Phone", "8001234"],
-    ["address", "Heimilisfang", "Address", "Laugavegur 1"],
-    ["bankName", "Banki", "Bank", "Íslandsbanki"],
-    ["bankAccount", "Reikningsnúmer", "Account no.", "0111-26-123456"],
-    ["union", "Stéttarfélag", "Union", "VR"],
-    ["pension", "Lífeyrissjóður", "Pension", "Gildi"],
-    ["jobTitle", "Starfsheiti", "Job title", "Barþjónn"],
-  ];
-  const payType = (form as Record<string, unknown>).payType as string || "hourly";
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-      {fields.map(([key, is, en, ph]) => (
-        <div key={key} className="form-group">
-          <label className="form-label">{lang === "is" ? is : en}</label>
-          <input className="form-input" placeholder={ph} value={String(form[key] || "")} onChange={e => onChange({ ...form, [key]: e.target.value })} />
-        </div>
-      ))}
-      {isOwner && (
-        <div className="form-group">
-          <label className="form-label">{lang === "is" ? "Hlutverk" : "Role"}</label>
-          <select className="form-input" value={form.role || "staff"} onChange={e => onChange({ ...form, role: e.target.value as Role })}>
-            {ROLES.map(r => <option key={r.key} value={r.key}>{lang === "is" ? r.labelIs : r.labelEn}</option>)}
-          </select>
-        </div>
-      )}
-      <div className="form-group">
-        <label className="form-label">{lang === "is" ? "Ráðningarstig" : "Employment type"}</label>
-        <select className="form-input" value={form.employmentType || ""} onChange={e => onChange({ ...form, employmentType: e.target.value })}>
-          <option value="">{lang === "is" ? "Veldu..." : "Choose..."}</option>
-          <option value="full-time">{lang === "is" ? "Fullt starf" : "Full-time"}</option>
-          <option value="part-time">{lang === "is" ? "Hlutastarf" : "Part-time"}</option>
-        </select>
-      </div>
-
-      {/* ── Pay settings ── */}
-      <div style={{ borderTop: "1px solid var(--border)", paddingTop: "12px", marginTop: "4px" }}>
-        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "10px" }}>
-          {lang === "is" ? "💰 Launastillingar" : "💰 Pay settings"}
-        </div>
-        <div className="form-group" style={{ marginBottom: "10px" }}>
-          <label className="form-label">{lang === "is" ? "Launamáti" : "Pay type"}</label>
-          <select className="form-input" value={payType} onChange={e => onChange({ ...form, ...{ payType: e.target.value } } as Partial<TeamMember>)}>
-            <option value="hourly">{lang === "is" ? "Tímakaup" : "Hourly"}</option>
-            <option value="monthly">{lang === "is" ? "Föst mánaðarlaun" : "Fixed monthly"}</option>
-            <option value="averaged">{lang === "is" ? "Jafnaðarkaup" : "Averaged pay"}</option>
-          </select>
-        </div>
-        {(payType === "hourly" || payType === "averaged") && (
-          <div className="form-group" style={{ marginBottom: "10px" }}>
-            <label className="form-label">{lang === "is" ? "Grunnkaup (kr/klst)" : "Base rate (ISK/hr)"}</label>
-            <input type="number" className="form-input" placeholder="1800" min={0}
-              value={String((form as Record<string, unknown>).hourlyRate || "")}
-              onChange={e => onChange({ ...form, ...{ hourlyRate: parseInt(e.target.value) || 0 } } as Partial<TeamMember>)} />
-            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "3px" }}>
-              {lang === "is" ? "Lágmarkskaup Efling/SA 2025: ~1.782 kr/klst" : "Efling/SA minimum 2025: ~ISK 1,782/hr"}
-            </div>
-          </div>
-        )}
-        {(payType === "monthly" || payType === "averaged") && (
-          <div className="form-group" style={{ marginBottom: "10px" }}>
-            <label className="form-label">{lang === "is" ? payType === "monthly" ? "Mánaðarlaun (kr)" : "Jafnaðarkaup (kr/mán)" : payType === "monthly" ? "Monthly salary (ISK)" : "Averaged monthly (ISK)"}</label>
-            <input type="number" className="form-input" placeholder="450000" min={0}
-              value={String((form as Record<string, unknown>).monthlyRate || "")}
-              onChange={e => onChange({ ...form, ...{ monthlyRate: parseInt(e.target.value) || 0 } } as Partial<TeamMember>)} />
-          </div>
-        )}
-        <div className="form-group">
-          <label className="form-label">{lang === "is" ? "Kjarasamningur" : "Collective agreement"}</label>
-          <select className="form-input" value={String((form as Record<string, unknown>).collectiveAgreement || "efling_sa")} onChange={e => onChange({ ...form, ...{ collectiveAgreement: e.target.value } } as Partial<TeamMember>)}>
-            <option value="efling_sa">Efling / SA — {lang === "is" ? "Veitingastaðir" : "Restaurants"}</option>
-            <option value="custom">{lang === "is" ? "Sérstakur samningur" : "Custom agreement"}</option>
-          </select>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 
 

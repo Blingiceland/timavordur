@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { cleanStr, isOptionalKennitala } from "@/lib/validation";
 
 async function verifyToken(req: NextRequest) {
   const auth = req.headers.get("Authorization");
@@ -35,26 +36,32 @@ export async function POST(
     const body = await req.json();
     const requireApproval = companyData.requireApproval !== false; // default true
 
+    const name = cleanStr(body.name) || decoded.name || decoded.email || "";
+    if (!name) return NextResponse.json({ error: "Nafn vantar" }, { status: 400 });
+    if (!isOptionalKennitala(body.ssn)) {
+      return NextResponse.json({ error: "Ógild kennitala" }, { status: 400 });
+    }
+
     await staffRef.set({
       uid: decoded.uid,
       email: decoded.email || "",
-      name: body.name || decoded.displayName || decoded.email || "",
+      name,
       status: requireApproval ? "pending" : "approved",
-      language: body.language || "is",
+      language: body.language === "en" ? "en" : "is",
       // Personal details
-      ssn: body.ssn || "",
-      phone: body.phone || "",
-      address: body.address || "",
+      ssn: cleanStr(body.ssn, 11),
+      phone: cleanStr(body.phone, 30),
+      address: cleanStr(body.address),
       // Bank
-      bankName: body.bankName || "",
-      bankAccount: body.bankAccount || "",
+      bankName: cleanStr(body.bankName, 80),
+      bankAccount: cleanStr(body.bankAccount, 30),
       // Employment
-      union: body.union || "",
-      pension: body.pension || "",
-      workPermit: body.workPermit ?? null,
-      workPermitExpiry: body.workPermitExpiry || "",
-      jobTitle: body.jobTitle || "",
-      employmentType: body.employmentType || "",
+      union: cleanStr(body.union, 80),
+      pension: cleanStr(body.pension, 80),
+      workPermit: typeof body.workPermit === "boolean" ? body.workPermit : null,
+      workPermitExpiry: cleanStr(body.workPermitExpiry, 20),
+      jobTitle: cleanStr(body.jobTitle, 80),
+      employmentType: cleanStr(body.employmentType, 40),
       // Meta
       registeredAt: FieldValue.serverTimestamp(),
       registeredSelf: true,

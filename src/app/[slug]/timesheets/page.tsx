@@ -117,11 +117,16 @@ export default function TimesheetsPage() {
     setLoading(true); setError("");
     try {
       const token = await user.getIdToken();
-      const res = await fetch(`/api/${slug}/timesheets?period=${getPeriodParam(periodOffset)}&uid=${selectedUid}`, { headers: { Authorization: `Bearer ${token}` } });
+      // Managers may request "all" or a specific person; staff only ever see
+      // themselves, so omit the uid param and let the API default to the caller.
+      const isMgr = ["manager", "admin", "owner"].includes(myRole);
+      const uidParam = isMgr ? selectedUid : "";
+      const qs = uidParam ? `&uid=${uidParam}` : "";
+      const res = await fetch(`/api/${slug}/timesheets?period=${getPeriodParam(periodOffset)}${qs}`, { headers: { Authorization: `Bearer ${token}` } });
       const d = await res.json();
       if (res.ok) setData(d); else setError(d.error || "Villa");
     } catch { setError("Netvillla"); } finally { setLoading(false); }
-  }, [user, slug, periodOffset, selectedUid]);
+  }, [user, slug, periodOffset, selectedUid, myRole]);
 
   useEffect(() => {
     if (!user) return;

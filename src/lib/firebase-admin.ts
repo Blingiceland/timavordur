@@ -14,7 +14,6 @@ function getAdminApp(): App {
     const keyPath = path.join(process.cwd(), "service-account-key.json");
     if (fs.existsSync(keyPath)) {
         const serviceAccount = JSON.parse(fs.readFileSync(keyPath, "utf8"));
-        console.log("[FIREBASE ADMIN] Tengt með service-account-key.json");
         return initializeApp({
             credential: cert(serviceAccount),
             projectId: serviceAccount.project_id,
@@ -25,7 +24,6 @@ function getAdminApp(): App {
     const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
     if (serviceAccountKey) {
         const serviceAccount = JSON.parse(serviceAccountKey);
-        console.log("[FIREBASE ADMIN] Tengt með FIREBASE_SERVICE_ACCOUNT_KEY env var");
         return initializeApp({
             credential: cert(serviceAccount),
             projectId: serviceAccount.project_id,

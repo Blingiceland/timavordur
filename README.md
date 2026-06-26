@@ -1,36 +1,73 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Tímavörður
 
-## Getting Started
+Fjöltenant **vaktaplönunar- og stimpilklukkukerfi** fyrir veitinga-/skemmtistaði.
+Byggt á Next.js 16 (App Router) + React 19 + Firebase (Auth + Firestore).
+Reiknar laun sjálfvirkt skv. Efling/SA kjarasamningi (dagvinna, kvöld-, helgar-,
+nætur- og stórhátíðarálag, íslenskir frídagar).
 
-First, run the development server:
+Hvert fyrirtæki (t.d. `dillon`, `pablo`) hefur sína slóð `/[slug]` og einangruð
+gögn undir `tv_companies/{id}` í Firestore. Notendur skrá sig inn með Google.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## Hlutverk
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Hlutverk     | Aðgangur |
+|--------------|----------|
+| `superadmin` | Stofnar/sýslar með öll fyrirtæki (`/superadmin`). |
+| `owner`      | Fullur aðgangur að einu fyrirtæki: stillingar, starfsfólk, vaktir. |
+| `admin`      | Starfsmannaumsýsla, vaktir, launayfirlit. |
+| `manager`    | Sér stöðu liðs og vaktir. |
+| `staff`      | Eigin stimpilklukka, vaktir og launayfirlit. |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Uppsetning (þróun)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Umhverfisbreytur** — afritaðu `.env.example` í `.env.local` og fylltu út
+   Firebase-gildin (sjá Firebase Console → Project settings).
+2. **Þjónustureikningslykill** — sæktu service-account JSON úr Firebase Console
+   (Project settings → Service accounts → Generate new private key) og vistaðu
+   sem `service-account-key.json` í verkefnisrótinni. *Hvorug skráin fer í git.*
+3. **Setja upp og keyra:**
+   ```bash
+   npm install
+   npm run dev
+   ```
+   Opnaðu http://localhost:3000.
 
-## Learn More
+## Fyrsti superadmin (bootstrap)
 
-To learn more about Next.js, take a look at the following resources:
+Superadmin-hlutverkið er chicken-and-egg: notandi þarf fyrst að vera til í
+Firebase Auth.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Skráðu þig inn með Google á `/superadmin/login` (býr til Auth-notanda).
+2. Keyrðu seed-scriptið (les `service-account-key.json`):
+   ```bash
+   node seed-superadmin.js
+   ```
+   Það setur `tv_users/{uid}.role = "superadmin"`. (Netfangið er stillt efst í
+   scriptinu.)
+3. Eða: kallaðu `POST /api/superadmin/seed` með `{ secret, email }` þar sem
+   `secret` jafngildir `SETUP_SECRET` úr `.env.local`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Onboarda nýtt fyrirtæki
 
-## Deploy on Vercel
+1. Skráðu þig inn sem superadmin á `/superadmin`.
+2. „+ Bæta við fyrirtæki" → nafn, slug (t.d. `dillon`), kennitala, admin-netfang.
+3. Admin fer á `/[slug]`, skráir sig inn með Google — fær sjálfkrafa `owner`
+   (netfangið er í `adminEmails`).
+4. Starfsfólk skráir sig á `/[slug]`; owner/admin samþykkir í starfsmannaflipanum.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Öryggi
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Öll gagnaöflun fer um API-leiðir með Firebase Admin SDK (server-side).
+- `firestore.rules` hafnar **öllum** beinum client-aðgangi (admin SDK fer framhjá
+  reglunum). Birtu reglur með `firebase deploy --only firestore:rules`.
+- `service-account-key.json`, `.env*` og `*service-account*.json` eru git-hunsuð.
+
+## Skipanir
+
+| Skipun           | Lýsing |
+|------------------|--------|
+| `npm run dev`    | Þróunarþjónn (Turbopack). |
+| `npm run build`  | Framleiðslubygging. |
+| `npm run start`  | Keyra byggingu. |
+| `npm run lint`   | ESLint. |
+| `npm run test`   | Vitest (einingapróf, m.a. launaútreikningur). |

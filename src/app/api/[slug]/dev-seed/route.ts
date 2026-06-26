@@ -5,6 +5,10 @@ import { FieldValue } from "firebase-admin/firestore";
 // DEV ONLY — seed mock punch records for testing
 // POST /api/[slug]/dev-seed  (admin/owner only)
 export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+  // Mock-data seeding is a development-only tool — never expose it in production.
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const { slug } = await params;
   const auth = req.headers.get("Authorization");
@@ -62,10 +66,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       { in: new Date("2026-04-01T09:00:00Z"), out: new Date("2026-04-01T17:00:00Z") },
       // Miðvikudagur 2. apríl — kvöldvakt (17:00–23:30)
       { in: new Date("2026-04-02T17:00:00Z"), out: new Date("2026-04-02T23:30:00Z") },
-      // Fimmtudagur 3. apríl — Skírdagur (helgarfrídagur ×1.45)
-      { in: new Date("2026-04-03T10:00:00Z"), out: new Date("2026-04-03T18:00:00Z") },
-      // Föstudagur 4. apríl — Föstudagurinn langi (stórhátíð ×1.90!)
-      { in: new Date("2026-04-04T12:00:00Z"), out: new Date("2026-04-04T20:00:00Z") },
+      // Fimmtudagur 2. apríl — Skírdagur (helgarfrídagur ×1.45)
+      { in: new Date("2026-04-02T10:00:00Z"), out: new Date("2026-04-02T18:00:00Z") },
+      // Föstudagur 3. apríl — Föstudagurinn langi (stórhátíð ×1.90!)
+      { in: new Date("2026-04-03T12:00:00Z"), out: new Date("2026-04-03T20:00:00Z") },
     ];
 
     // Add punch records
