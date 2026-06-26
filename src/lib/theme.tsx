@@ -5,13 +5,13 @@ type Theme = "dark" | "light";
 const ThemeContext = createContext<{ theme: Theme; toggle: () => void }>({ theme: "light", toggle: () => {} });
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>("dark");
 
   useEffect(() => {
     // Read the persisted theme after mount. This must run in an effect (not a lazy
     // useState initializer) so server and client render the same default first and
     // avoid a hydration mismatch.
-    const saved = (localStorage.getItem("tv_theme") as Theme) || "light";
+    const saved = (localStorage.getItem("tv_theme") as Theme) || "dark";
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: post-mount sync
     setTheme(saved);
     document.documentElement.setAttribute("data-theme", saved);

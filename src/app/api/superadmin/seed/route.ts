@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     if (message.includes("no user record")) {
       return NextResponse.json(
         {
-          error: "Notandinn hefur ekki skráð sig inn með Google enn. Skráðu þig inn á timavordur.vercel.app fyrst.",
+          error: "Notandinn hefur ekki skráð sig inn með Google enn. Skráðu þig inn á timon.bling.is fyrst.",
         },
         { status: 404 }
       );
