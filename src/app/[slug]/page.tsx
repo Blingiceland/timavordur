@@ -5,7 +5,7 @@ import { auth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup, signInWithRedirect, signInWithCustomToken, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { useTheme } from "@/lib/theme";
 
-import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift } from "./_portal/types";
+import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift, SwapRequest, SwapShift } from "./_portal/types";
 import {
   roleLabel, roleColor, atLeast,
   ALL_REG_FIELDS, T,
@@ -24,8 +24,14 @@ export default function CompanyPortal() {
   const [punching, setPunching] = useState(false);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
-  // My upcoming shifts (clock tab)
-  const [myShifts, setMyShifts] = useState<PortalShift[]>([]);
+  // Upcoming shifts (next 3 weeks) — full plan; "my shifts" is derived from this
+  const [allShifts, setAllShifts] = useState<PortalShift[]>([]);
+  // Shift swaps
+  const [swaps, setSwaps] = useState<SwapRequest[]>([]);
+  const [swapFromId, setSwapFromId] = useState("");
+  const [swapMode, setSwapMode] = useState<"cover" | "swap">("cover");
+  const [swapToUid, setSwapToUid] = useState("");
+  const [swapToId, setSwapToId] = useState("");
   // Staff username/password sign-in
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loggingIn, setLoggingIn] = useState(false);
@@ -105,8 +111,9 @@ export default function CompanyPortal() {
   // tab, and single-tab staff have no tab bar to switch back with.
   useEffect(() => { setTab("clock"); }, [user?.uid]);
 
-  // Fetch the signed-in user's own upcoming shifts (next 3 weeks) for the clock tab.
-  const fetchMyShifts = useCallback(async () => {
+  // Fetch the full upcoming schedule (next 3 weeks) — used by the clock tab's
+  // "my shifts" and the swaps tab.
+  const fetchShifts = useCallback(async () => {
     if (!user) return;
     try {
       const token = await user.getIdToken();
@@ -114,11 +121,23 @@ export default function CompanyPortal() {
       const to = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
       const res = await fetch(`/api/${slug}/schedule?from=${from}&to=${to}`, { headers: { Authorization: `Bearer ${token}` } });
       const d = await res.json();
-      if (res.ok) setMyShifts((d.shifts || []).filter((s: PortalShift) => s.uid === user.uid));
+      if (res.ok) setAllShifts(d.shifts || []);
     } catch { /* non-critical */ }
   }, [user, slug]);
 
-  useEffect(() => { if (user && portal?.status === "approved") fetchMyShifts(); }, [user, portal?.status, fetchMyShifts]);
+  const fetchSwaps = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/${slug}/swaps`, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json();
+      if (res.ok) setSwaps(d.requests || []);
+    } catch { /* non-critical */ }
+  }, [user, slug]);
+
+  useEffect(() => {
+    if (user && portal?.status === "approved") { fetchShifts(); fetchSwaps(); }
+  }, [user, portal?.status, fetchShifts, fetchSwaps]);
 
   const showMsg = (text: string, ok = true) => { setMsg({ text, ok }); setTimeout(() => setMsg(null), 4000); };
 
@@ -145,6 +164,36 @@ export default function CompanyPortal() {
       else { showMsg(d.error || (lang === "en" ? "Error" : "Villa"), false); return false; }
     } catch { showMsg(lang === "en" ? "Network error" : "Netvillla", false); return false; }
     finally { setSaving(false); }
+  };
+
+  const doSwapAction = async (id: string, action: string) => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/${slug}/swaps`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ id, action }) });
+      const d = await res.json();
+      if (res.ok) { showMsg(lang === "is" ? "✅ Uppfært" : "✅ Updated"); await Promise.all([fetchSwaps(), fetchShifts()]); }
+      else showMsg(d.error || "Villa", false);
+    } catch { showMsg(lang === "en" ? "Network error" : "Netvilla", false); }
+  };
+
+  const createSwap = async () => {
+    if (!user) return;
+    const fromShift = allShifts.find(s => s.id === swapFromId && s.uid === user.uid);
+    if (!fromShift) { showMsg(lang === "is" ? "Veldu vaktina þína" : "Pick your shift", false); return; }
+    const body: Record<string, unknown> = { type: swapMode, fromShift };
+    if (swapMode === "swap") {
+      const toShift = allShifts.find(s => s.id === swapToId && s.uid === swapToUid);
+      if (!swapToUid || !toShift) { showMsg(lang === "is" ? "Veldu vakt til að skipta við" : "Pick a shift to swap with", false); return; }
+      body.toUid = swapToUid; body.toShift = toShift as SwapShift;
+    }
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/${slug}/swaps`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+      const d = await res.json();
+      if (res.ok) { showMsg(lang === "is" ? "✅ Beiðni send" : "✅ Request sent"); setSwapFromId(""); setSwapToUid(""); setSwapToId(""); await fetchSwaps(); }
+      else showMsg(d.error || "Villa", false);
+    } catch { showMsg(lang === "en" ? "Network error" : "Netvilla", false); }
   };
 
   const doRegister = async (e: React.FormEvent) => {
@@ -362,9 +411,25 @@ export default function CompanyPortal() {
   const staffAll = portal.staffList || [];
   const pendingStaff = staffAll.filter(s => s.status === "pending");
 
+  // ── Swaps-derived data ──
+  const myUpcoming = allShifts.filter(s => s.uid === user.uid);
+  const othersShifts = allShifts.filter(s => s.uid !== user.uid);
+  const openCovers = swaps.filter(s => s.type === "cover" && s.status === "pending" && s.fromUid !== user.uid);
+  const swapsToMe = swaps.filter(s => s.type === "swap" && s.status === "pending" && s.toUid === user.uid);
+  const myRequests = swaps.filter(s => s.fromUid === user.uid && (s.status === "pending" || s.status === "accepted"));
+  const swapAwaitingApproval = swaps.filter(s => s.status === "accepted");
+  const swapBadge = canSeeTeam ? swapAwaitingApproval.length : (openCovers.length + swapsToMe.length);
+  const fmtSwapShift = (sh: SwapShift) => {
+    const d = new Date(sh.date + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+    return `${d} ${sh.startTime}–${sh.endTime}${sh.endTime <= sh.startTime ? " (+1)" : ""}`;
+  };
+  const swapStatusLabel = (s: string) =>
+    s === "accepted" ? (lang === "is" ? "Bíður samþykkis yfirmanns" : "Awaiting manager") : (lang === "is" ? "Í bið" : "Pending");
+
   const tabs: { key: Tab; label: string }[] = (
     [
       { key: "clock" as Tab, label: t.tabClock, show: true },
+      { key: "swaps" as Tab, label: lang === "is" ? "Vaktaskipti" : "Swaps", show: true },
       { key: "team" as Tab, label: t.tabTeam, show: canSeeTeam },
       { key: "staff" as Tab, label: t.tabStaff, show: canManage },
       { key: "settings" as Tab, label: t.tabSettings, show: isOwner },
@@ -418,6 +483,7 @@ export default function CompanyPortal() {
               <button key={tb.key} onClick={() => setTab(tb.key)} className={`btn btn--sm ${tab === tb.key ? "btn--primary" : "btn--ghost"}`}>
                 {tb.label}
                 {tb.key === "staff" && pendingStaff.length > 0 && <span style={{ marginLeft: "6px", background: tab === tb.key ? "rgba(255,255,255,0.2)" : "var(--border)", borderRadius: "20px", padding: "1px 7px", fontSize: "0.75rem" }}>{pendingStaff.length}</span>}
+                {tb.key === "swaps" && swapBadge > 0 && <span style={{ marginLeft: "6px", background: tab === tb.key ? "rgba(255,255,255,0.2)" : "var(--border)", borderRadius: "20px", padding: "1px 7px", fontSize: "0.75rem" }}>{swapBadge}</span>}
               </button>
             ))}
           </div>
@@ -440,13 +506,13 @@ export default function CompanyPortal() {
                 <div key={l} style={{ textAlign: "center" }}><div style={{ fontSize: "1.8rem", color: c, fontWeight: 700 }}>{v}</div><div className="text-muted" style={{ fontSize: "0.82rem" }}>{l}</div></div>
               ))}
             </div>
-            {myShifts.length > 0 && (
+            {myUpcoming.length > 0 && (
               <div className="card" style={{ width: "100%", maxWidth: 440, padding: "16px 20px" }}>
                 <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
                   🗓 {lang === "is" ? "Mínar vaktir" : "My shifts"}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {myShifts.map(sh => {
+                  {myUpcoming.map(sh => {
                     const nextDay = sh.endTime <= sh.startTime;
                     const label = new Date(sh.date + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
                     return (
@@ -461,8 +527,123 @@ export default function CompanyPortal() {
             )}
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
               <a href={`/${slug}/timesheets`} className="btn btn--secondary btn--sm">📊 {lang === "is" ? "Tímaskýrslur" : "Timesheets"}</a>
-              {canSeeTeam && <a href={`/${slug}/schedule`} className="btn btn--secondary btn--sm">🗓 {lang === "is" ? "Vaktaplan" : "Schedule"}</a>}
+              <a href={`/${slug}/schedule`} className="btn btn--secondary btn--sm">🗓 {lang === "is" ? "Vaktaplan" : "Schedule"}</a>
             </div>
+          </div>
+        )}
+
+        {/* ── SWAPS TAB ──────────────────────────────────────────────────── */}
+        {tab === "swaps" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 640 }}>
+            {/* Create a request */}
+            <div className="card" style={{ padding: 20 }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 14 }}>{lang === "is" ? "Bjóða eða skipta á vakt" : "Offer or swap a shift"}</div>
+              {myUpcoming.length === 0 ? (
+                <p className="text-muted" style={{ fontSize: "0.88rem" }}>{lang === "is" ? "Þú átt engar vaktir framundan." : "You have no upcoming shifts."}</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">{lang === "is" ? "Mín vakt" : "My shift"}</label>
+                    <select className="form-input" value={swapFromId} onChange={e => setSwapFromId(e.target.value)}>
+                      <option value="">{lang === "is" ? "Veldu vakt..." : "Choose shift..."}</option>
+                      {myUpcoming.map(s => <option key={s.id} value={s.id}>{fmtSwapShift(s)}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {(["cover", "swap"] as const).map(m => (
+                      <button key={m} onClick={() => setSwapMode(m)} style={{ flex: 1, padding: "9px", borderRadius: 8, border: `2px solid ${swapMode === m ? "var(--brand)" : "var(--border)"}`, background: swapMode === m ? "var(--brand-glow)" : "transparent", cursor: "pointer", fontSize: "0.82rem", color: swapMode === m ? "var(--brand)" : "var(--text-secondary)", fontWeight: swapMode === m ? 600 : 400 }}>
+                        {m === "cover" ? (lang === "is" ? "Bjóða (cover)" : "Offer (cover)") : (lang === "is" ? "Skipta við" : "Swap with")}
+                      </button>
+                    ))}
+                  </div>
+                  {swapMode === "swap" && (
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label">{lang === "is" ? "Skipta við vakt" : "Swap with shift"}</label>
+                      <select className="form-input" value={swapToId} onChange={e => { const sh = othersShifts.find(x => x.id === e.target.value); setSwapToId(e.target.value); setSwapToUid(sh?.uid || ""); }}>
+                        <option value="">{lang === "is" ? "Veldu vakt samstarfsmanns..." : "Choose a colleague's shift..."}</option>
+                        {othersShifts.map(s => <option key={s.id} value={s.id}>{s.name ? `${s.name} — ` : ""}{fmtSwapShift(s)}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  <button className="btn btn--primary" onClick={createSwap} disabled={!swapFromId} style={{ justifyContent: "center" }}>{lang === "is" ? "Senda beiðni" : "Send request"}</button>
+                </div>
+              )}
+            </div>
+
+            {/* Manager approvals */}
+            {canSeeTeam && swapAwaitingApproval.length > 0 && (
+              <div className="card card--brand" style={{ padding: 20 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 12 }}>✅ {lang === "is" ? "Bíða samþykkis" : "Awaiting approval"}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {swapAwaitingApproval.map(r => (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "10px 12px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                      <div style={{ fontSize: "0.85rem" }}>
+                        {r.type === "cover"
+                          ? <><strong>{r.claimedByName}</strong> {lang === "is" ? "tekur vakt" : "covers"} <strong>{r.fromName}</strong>: {fmtSwapShift(r.fromShift)}</>
+                          : <><strong>{r.fromName}</strong> ⇄ <strong>{r.toName}</strong>: {fmtSwapShift(r.fromShift)} ⇄ {r.toShift && fmtSwapShift(r.toShift)}</>}
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => doSwapAction(r.id, "approve")}>{lang === "is" ? "Samþykkja" : "Approve"}</button>
+                        <button className="btn btn--sm" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} onClick={() => doSwapAction(r.id, "decline")}>{lang === "is" ? "Hafna" : "Decline"}</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Open covers to take */}
+            {openCovers.length > 0 && (
+              <div className="card" style={{ padding: 20 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 12 }}>{lang === "is" ? "Lausar vaktir" : "Available shifts"}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {openCovers.map(r => (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "10px 12px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                      <div style={{ fontSize: "0.85rem" }}><strong>{r.fromName}</strong> {lang === "is" ? "býður" : "offers"}: {fmtSwapShift(r.fromShift)}</div>
+                      <button className="btn btn--primary btn--sm" onClick={() => doSwapAction(r.id, "claim")}>{lang === "is" ? "Taka" : "Take"}</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Swap requests addressed to me */}
+            {swapsToMe.length > 0 && (
+              <div className="card" style={{ padding: 20 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 12 }}>{lang === "is" ? "Beiðnir til mín" : "Requests for you"}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {swapsToMe.map(r => (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "10px 12px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                      <div style={{ fontSize: "0.85rem" }}><strong>{r.fromName}</strong> {lang === "is" ? "vill skipta" : "wants to swap"}: {fmtSwapShift(r.fromShift)} ⇄ {r.toShift && fmtSwapShift(r.toShift)} ({lang === "is" ? "þín" : "yours"})</div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => doSwapAction(r.id, "accept")}>{lang === "is" ? "Samþykkja" : "Accept"}</button>
+                        <button className="btn btn--sm" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} onClick={() => doSwapAction(r.id, "reject")}>{lang === "is" ? "Hafna" : "Reject"}</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* My own requests */}
+            {myRequests.length > 0 && (
+              <div className="card" style={{ padding: 20 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 12 }}>{lang === "is" ? "Mínar beiðnir" : "My requests"}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {myRequests.map(r => (
+                    <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "10px 12px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                      <div style={{ fontSize: "0.85rem" }}>
+                        {r.type === "cover"
+                          ? <>{lang === "is" ? "Býð" : "Offering"}: {fmtSwapShift(r.fromShift)}</>
+                          : <>{lang === "is" ? "Skipti" : "Swap"}: {fmtSwapShift(r.fromShift)} ⇄ {r.toName}</>}
+                        <span style={{ marginLeft: 8, fontSize: "0.75rem", color: "var(--text-muted)" }}>· {swapStatusLabel(r.status)}</span>
+                      </div>
+                      <button className="btn btn--ghost btn--sm" onClick={() => doSwapAction(r.id, "cancel")}>{lang === "is" ? "Hætta við" : "Cancel"}</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

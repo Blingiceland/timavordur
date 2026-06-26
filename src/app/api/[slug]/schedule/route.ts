@@ -29,17 +29,16 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
     if (!meDoc.exists) return NextResponse.json({ error: "not_registered" }, { status: 403 });
     const myRole = (meDoc.data()!.role as string) || "staff";
-    const isManager = ["manager", "admin", "owner"].includes(myRole);
 
     const url = new URL(req.url);
     const from = url.searchParams.get("from") || new Date().toISOString().slice(0, 10);
     const to = url.searchParams.get("to") || from;
 
-    // 1. Fetch single/override shifts for the date range
-    let qry = adminDb.collection("tv_companies").doc(company.id).collection("shifts")
-      .where("date", ">=", from).where("date", "<=", to).orderBy("date", "asc");
-    if (!isManager) qry = qry.where("uid", "==", decoded.uid) as typeof qry;
-    const singleSnap = await qry.get();
+    // 1. Fetch single/override shifts for the date range.
+    // All approved staff may view the full schedule (read-only); only manager+
+    // can create/edit/delete (enforced on POST/PATCH/DELETE).
+    const singleSnap = await adminDb.collection("tv_companies").doc(company.id).collection("shifts")
+      .where("date", ">=", from).where("date", "<=", to).orderBy("date", "asc").get();
     const singleShifts = singleSnap.docs.map(d => ({ id: d.id, source: "single" as const, ...d.data() }));
 
     // 2. Fetch active templates
@@ -72,7 +71,6 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
         if (!tmpl.daysOfWeek.includes(dow)) continue;
         if (tmpl.activeFrom && ymd < tmpl.activeFrom) continue;
         if (tmpl.activeTo && ymd > tmpl.activeTo) continue;
-        if (!isManager && tmpl.uid !== decoded.uid) continue;
         const key = `${tmpl.uid}_${ymd}`;
         if (cancelledKeys.has(key)) continue; // explicitly cancelled
         if (overriddenKeys.has(key)) continue; // single shift takes precedence
