@@ -112,7 +112,6 @@ export default function SchedulePage() {
 
   const [myRole, setMyRole] = useState("");
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
-  const [uidToColor, setUidToColor] = useState<Map<string, number>>(new Map());
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
@@ -154,9 +153,6 @@ export default function SchedulePage() {
       if (d.role) setMyRole(d.role);
       const approved: StaffMember[] = (d.staffList || []).filter((s: StaffMember) => s.status === "approved");
       setStaffList(approved);
-      const m = new Map<string, number>();
-      approved.forEach((s, i) => m.set(s.uid, i % STAFF_COLORS.length));
-      setUidToColor(m);
       setMUid(prev => prev || approved[0]?.uid || "");
     });
     return () => { cancelled = true; };
@@ -214,7 +210,11 @@ export default function SchedulePage() {
     } finally { setDeletingId(null); }
   };
 
-  const col = (uid: string) => STAFF_COLORS[uidToColor.get(uid) ?? 0];
+  // Colour-code by person. Build from everyone seen in the data so staff (who
+  // don't receive the staff list) still get distinct colours per person.
+  const allUids = Array.from(new Set([...staffList.map(s => s.uid), ...shifts.map(s => s.uid), ...templates.map(tm => tm.uid)]));
+  const colorIndex = new Map(allUids.map((uid, i) => [uid, i % STAFF_COLORS.length]));
+  const col = (uid: string) => STAFF_COLORS[colorIndex.get(uid) ?? 0];
   const totalEst = shifts.reduce((s, x) => s + (x.wageEstimate || 0), 0);
   const totalHrs = shifts.reduce((s, x) => s + (x.totalHours || 0), 0);
   // Group shifts by date
@@ -246,7 +246,7 @@ export default function SchedulePage() {
             )}
             {shifts.length > 0 && (
               <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", padding: "5px 11px", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 7 }}>
-                {totalHrs.toFixed(1)}h{totalEst > 0 ? ` · ${fmtKr(totalEst)}` : ""}
+                {totalHrs.toFixed(1)}h{isManager && totalEst > 0 ? ` · ${fmtKr(totalEst)}` : ""}
               </span>
             )}
           </div>

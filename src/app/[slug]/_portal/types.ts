@@ -4,7 +4,32 @@ import type { Role, Status, FieldLevel } from "@/lib/types";
 
 export type { Role, Status, FieldLevel };
 export type Lang = "is" | "en";
-export type Tab = "clock" | "team" | "staff" | "settings";
+export type Tab = "clock" | "team" | "staff" | "settings" | "swaps";
+
+// ── Shift swaps ──────────────────────────────────────────────────────────────
+export interface SwapShift {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  notes?: string;
+  source?: string;
+  templateId?: string;
+}
+
+export interface SwapRequest {
+  id: string;
+  type: "cover" | "swap";
+  status: "pending" | "accepted" | "approved" | "rejected" | "cancelled";
+  fromUid: string;
+  fromName: string;
+  fromShift: SwapShift;
+  toUid?: string;
+  toName?: string;
+  toShift?: SwapShift;
+  claimedByUid?: string;
+  claimedByName?: string;
+}
 
 export interface TeamMember {
   uid: string;
@@ -34,11 +59,13 @@ export interface TeamMember {
 export interface PortalShift {
   id: string;
   uid: string;
+  name?: string;
   date: string;       // YYYY-MM-DD
   startTime: string;  // HH:MM
   endTime: string;    // HH:MM
   notes?: string;
   source?: string;    // "single" | "template"
+  templateId?: string;
 }
 
 export interface PortalData {

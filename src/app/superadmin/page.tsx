@@ -300,10 +300,8 @@ export default function SuperAdminPage() {
                     fontSize: "0.85rem", color: "var(--text-secondary)",
                   }}
                 >
-                  🔗 Staff:{" "}
-                  <strong className="text-brand">timavordur.is/{newForm.slug}/staff</strong>
-                  {"  "}· Admin:{" "}
-                  <strong className="text-brand">timavordur.is/{newForm.slug}/admin</strong>
+                  🔗 Hlekkur:{" "}
+                  <strong className="text-brand">timon.bling.is/{newForm.slug}</strong>
                 </div>
               )}
 
@@ -453,8 +451,8 @@ export default function SuperAdminPage() {
 
             <div style={{ borderTop: "1px solid var(--border)", paddingTop: "16px", display: "flex", gap: "8px" }}>
               <div style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
-                <div>🔗 Staff: <strong>timavordur.vercel.app/{editCompany.slug}/staff</strong></div>
-                <div>🔐 Admin: <strong>timavordur.vercel.app/{editCompany.slug}/admin</strong></div>
+                <div>🔗 Hlekkur: <strong>timon.bling.is/{editCompany.slug}</strong></div>
+                <div>🔐 Admin: <strong>timon.bling.is/superadmin</strong></div>
               </div>
             </div>
           </div>

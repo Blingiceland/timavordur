@@ -37,7 +37,7 @@ const FEATURES = [
 
 const STEPS = [
   { step: "01", title: "Þú hefur samband", desc: "Sendu okkur skilaboð — við setjum upp aðgang fyrir þitt fyrirtæki." },
-  { step: "02", title: "Starfsfólk fær hlekk", desc: "Þú deylir hlekk eins og timavordur.is/mitt-fyrirtaeki/staff með starfsfólkinu þínu." },
+  { step: "02", title: "Starfsfólk fær hlekk", desc: "Þú deilir hlekk eins og timon.bling.is/mitt-fyrirtaeki með starfsfólkinu þínu." },
   { step: "03", title: "Klukka inn og út", desc: "Starfsfólk skráir sig inn með Google og klukkar inn/út á hvert skipti." },
   { step: "04", title: "Þú sérð allt", desc: "Í admin-viðmóti sérðu allar tímaskráningar, getur samþykkt leiðréttingar og séð samantekt á launatímabili." },
 ];
@@ -152,7 +152,7 @@ export default function LandingPage() {
               <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#ffbd2e" }} />
               <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#28c840" }} />
               <span style={{ marginLeft: 12, color: "var(--text-muted)", fontSize: "0.82rem" }}>
-                timavordur.is/dillon/staff
+                timon.bling.is/dillon
               </span>
             </div>
 
