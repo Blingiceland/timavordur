@@ -27,7 +27,7 @@ async function getCompany(slug: string) {
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
   if (snap.empty) return null;
   const d = snap.docs[0].data();
-  return { id: snap.docs[0].id, name: d.name as string, slug: d.slug as string, adminEmails: (d.adminEmails || []) as string[], registrationFields: d.registrationFields || {}, requireApproval: d.requireApproval !== false, ipRestriction: d.ipRestriction || { enabled: false, allowedIPs: [] } };
+  return { id: snap.docs[0].id, name: d.name as string, slug: d.slug as string, adminEmails: (d.adminEmails || []) as string[], registrationFields: d.registrationFields || {}, requireApproval: d.requireApproval !== false, ipRestriction: d.ipRestriction || { enabled: false, allowedIPs: [] }, businessType: (d.businessType === "restaurant" ? "restaurant" : "bar") as "bar" | "restaurant", wageCategories: (d.wageCategories || []) as { id: string; dayRate: number }[] };
 }
 
 async function verifyToken(req: NextRequest) {
@@ -124,9 +124,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       if (atLeast(role, "admin")) {
         const fullStaff = await Promise.all(staffSnap.docs.map(async (doc) => {
           const m = doc.data();
-          return { uid: doc.id, name: m.name, email: m.email || "", username: m.username || "", authType: m.authType || "", role: m.role || "staff", status: m.status || "approved", ssn: m.ssn || "", phone: m.phone || "", address: m.address || "", bankName: m.bankName || "", bankAccount: m.bankAccount || "", union: m.union || "", pension: m.pension || "", workPermit: m.workPermit ?? null, workPermitExpiry: m.workPermitExpiry || "", jobTitle: m.jobTitle || "", employmentType: m.employmentType || "", payType: m.payType || "hourly", hourlyRate: m.hourlyRate || 0, monthlyRate: m.monthlyRate || 0, collectiveAgreement: m.collectiveAgreement || "efling_sa", language: m.language || "is", addedAt: toStr(m.addedAt || m.registeredAt) };
+          return { uid: doc.id, name: m.name, email: m.email || "", username: m.username || "", authType: m.authType || "", role: m.role || "staff", status: m.status || "approved", ssn: m.ssn || "", phone: m.phone || "", address: m.address || "", bankName: m.bankName || "", bankAccount: m.bankAccount || "", union: m.union || "", pension: m.pension || "", workPermit: m.workPermit ?? null, workPermitExpiry: m.workPermitExpiry || "", jobTitle: m.jobTitle || "", employmentType: m.employmentType || "", payType: m.payType || "hourly", hourlyRate: m.hourlyRate || 0, monthlyRate: m.monthlyRate || 0, collectiveAgreement: m.collectiveAgreement || "efling_sa", wageCategoryId: m.wageCategoryId || "", language: m.language || "is", addedAt: toStr(m.addedAt || m.registeredAt) };
         }));
-        return NextResponse.json({ ...base, team, staffList: fullStaff, registrationFields: company.registrationFields, requireApproval: company.requireApproval, ipRestriction: company.ipRestriction });
+        return NextResponse.json({ ...base, team, staffList: fullStaff, registrationFields: company.registrationFields, requireApproval: company.requireApproval, ipRestriction: company.ipRestriction, businessType: company.businessType, wageCategories: company.wageCategories });
       }
 
       return NextResponse.json({ ...base, team });
@@ -177,9 +177,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       const lastInData = lastSnap.docs[0].data();
       const punchInTime = lastInData.timestamp?.toDate?.() as Date | undefined;
       if (punchInTime) {
-        const hourlyRate = s.hourlyRate || 0;
+        const cat = company.wageCategories.find(c => c.id === s.wageCategoryId);
+        const hourlyRate = cat ? cat.dayRate : (s.hourlyRate || 0);
         const agreement = (s.collectiveAgreement || "efling_sa") as "efling_sa" | "custom";
-        const wage = calculateWage(punchInTime, now, hourlyRate, agreement);
+        const wage = calculateWage(punchInTime, now, hourlyRate, agreement, company.businessType);
         newRecordData.wageData = {
           totalHours: wage.totalHours,
           totalWage: wage.totalWage,
@@ -299,6 +300,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ slug
       payType: body.payType || "hourly",
       hourlyRate: num(body.hourlyRate), monthlyRate: num(body.monthlyRate),
       collectiveAgreement: body.collectiveAgreement || "efling_sa",
+      wageCategoryId: cleanStr(body.wageCategoryId, 40),
       addedAt: FieldValue.serverTimestamp(), addedBy: decoded.email || decoded.uid, registeredSelf: false, language: "is",
     });
 

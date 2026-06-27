@@ -13,7 +13,7 @@ async function verifyToken(req: NextRequest) {
 async function getCompany(slug: string) {
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
   if (snap.empty) return null;
-  return { id: snap.docs[0].id, ...snap.docs[0].data() } as { id: string; name: string; slug: string };
+  return { id: snap.docs[0].id, ...snap.docs[0].data() } as { id: string; name: string; slug: string; businessType?: "bar" | "restaurant"; wageCategories?: { id: string; dayRate: number }[] };
 }
 
 // GET /api/[slug]/schedule?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -134,7 +134,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     // Fetch staff for name + wage rate
     const staffDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(uid).get();
     const staff = staffDoc.data() || {};
-    const hourlyRate = (staff.hourlyRate as number) || 0;
+    const cat = (company.wageCategories || []).find(c => c.id === staff.wageCategoryId);
+    const hourlyRate = cat ? cat.dayRate : ((staff.hourlyRate as number) || 0);
     const agreement = (staff.collectiveAgreement as "efling_sa" | "custom") || "efling_sa";
 
     // Calculate wage estimate
@@ -144,7 +145,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       : `${date}T${endTime}:00Z`;
     const punchIn = new Date(startISO);
     const punchOut = new Date(endISO);
-    const wage = calculateWage(punchIn, punchOut, hourlyRate, agreement);
+    const wage = calculateWage(punchIn, punchOut, hourlyRate, agreement, company.businessType || "bar");
 
     const ref = await adminDb.collection("tv_companies").doc(company.id).collection("shifts").add({
       uid,

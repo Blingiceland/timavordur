@@ -2,9 +2,11 @@
 // Centralised here so route handlers and React pages reference one source of truth
 // instead of re-declaring these inline (and drifting out of sync).
 
-import type { CollectiveAgreement, PayType, WageBreakdown } from "./wage-calculator";
+import type { BusinessType, CollectiveAgreement, PayType, WageBreakdown } from "./wage-calculator";
+import type { WageCategory } from "./wage-categories";
 
-export type { CollectiveAgreement, PayType, WageBreakdown };
+export type { BusinessType, CollectiveAgreement, PayType, WageBreakdown };
+export type { WageCategory };
 
 // ── Roles & status ───────────────────────────────────────────────────────────
 export type Role = "staff" | "manager" | "admin" | "owner";
@@ -30,6 +32,8 @@ export interface Company {
   registrationFields: Record<string, FieldLevel>;
   requireApproval: boolean;
   ipRestriction: IpRestriction;
+  businessType?: BusinessType;          // "bar" | "restaurant" — gates the 55% night premium
+  wageCategories?: WageCategory[];      // editable launaflokkar with day rates
   /** Only populated by the superadmin company-list endpoint. */
   staffCount?: number;
 }

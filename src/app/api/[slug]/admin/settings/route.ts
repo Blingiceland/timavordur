@@ -23,10 +23,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
   const { slug } = await params;
   const result = await verifyAdmin(req, slug);
   if (!result) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { company } = result;
+  const c = result.company as Record<string, unknown>;
   return NextResponse.json({
-    registrationFields: company.registrationFields || {},
-    ipRestriction: company.ipRestriction || { enabled: false, allowedIPs: [] },
+    registrationFields: c.registrationFields || {},
+    ipRestriction: c.ipRestriction || { enabled: false, allowedIPs: [] },
+    businessType: c.businessType === "restaurant" ? "restaurant" : "bar",
+    wageCategories: c.wageCategories || [],
   });
 }
 
@@ -42,6 +44,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
   if (body.registrationFields !== undefined) updates.registrationFields = body.registrationFields;
   if (body.ipRestriction !== undefined) updates.ipRestriction = body.ipRestriction;
   if (body.requireApproval !== undefined) updates.requireApproval = body.requireApproval;
+  if (body.businessType === "bar" || body.businessType === "restaurant") updates.businessType = body.businessType;
+  if (Array.isArray(body.wageCategories)) {
+    // sanitise each category
+    updates.wageCategories = body.wageCategories
+      .filter((c: unknown) => c && typeof c === "object")
+      .map((c: Record<string, unknown>) => ({
+        id: String(c.id || "").slice(0, 40),
+        name: String(c.name || "").slice(0, 80),
+        description: String(c.description || "").slice(0, 200),
+        dayRate: Math.max(0, Math.round(Number(c.dayRate) || 0)),
+      }))
+      .filter((c: { id: string }) => c.id);
+  }
 
   await adminDb.collection("tv_companies").doc(company.id).update(updates);
   return NextResponse.json({ ok: true });

@@ -1,8 +1,8 @@
 // View-model types for the company portal page (client-side shapes returned by
 // /api/[slug]/portal). Domain enums are reused from the shared lib types.
-import type { Role, Status, FieldLevel } from "@/lib/types";
+import type { Role, Status, FieldLevel, WageCategory, BusinessType } from "@/lib/types";
 
-export type { Role, Status, FieldLevel };
+export type { Role, Status, FieldLevel, WageCategory, BusinessType };
 export type Lang = "is" | "en";
 export type Tab = "clock" | "team" | "staff" | "settings" | "swaps";
 
@@ -53,6 +53,7 @@ export interface TeamMember {
   workPermitExpiry?: string;
   jobTitle?: string;
   employmentType?: string;
+  wageCategoryId?: string;
   addedAt?: string;
 }
 
@@ -82,4 +83,6 @@ export interface PortalData {
   staffList?: TeamMember[];
   registrationFields?: Record<string, FieldLevel>;
   requireApproval?: boolean;
+  businessType?: BusinessType;
+  wageCategories?: WageCategory[];
 }

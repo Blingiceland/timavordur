@@ -13,7 +13,11 @@ async function getCompany(slug: string) {
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
   if (snap.empty) return null;
   const d = snap.docs[0].data();
-  return { id: snap.docs[0].id, name: d.name as string };
+  return {
+    id: snap.docs[0].id, name: d.name as string,
+    businessType: (d.businessType === "restaurant" ? "restaurant" : "bar") as "bar" | "restaurant",
+    wageCategories: (d.wageCategories || []) as { id: string; dayRate: number }[],
+  };
 }
 
 // GET /api/[slug]/timesheets?period=YYYY-MM&uid=all|<uid>
@@ -110,7 +114,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
       const records = recordsByUid.get(uid) || [];
       const payType = (staff.payType as string) || "hourly";
-      const hourlyRate = (staff.hourlyRate as number) || 0;
+      const cat = company.wageCategories.find(c => c.id === staff.wageCategoryId);
+      const hourlyRate = cat ? cat.dayRate : ((staff.hourlyRate as number) || 0);
       const monthlyRate = (staff.monthlyRate as number) || 0;
       const agreement = ((staff.collectiveAgreement as string) || "efling_sa") as "efling_sa" | "custom";
 
@@ -124,7 +129,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
         if (r.type === "in") {
           pendingIn = { timestamp: r.timestamp };
         } else if (r.type === "out" && pendingIn) {
-          const wage = calculateWage(pendingIn.timestamp, r.timestamp, hourlyRate, agreement);
+          const wage = calculateWage(pendingIn.timestamp, r.timestamp, hourlyRate, agreement, company.businessType);
           shifts.push({
             date: pendingIn.timestamp.toISOString().slice(0, 10),
             inTime: pendingIn.timestamp, outTime: r.timestamp,
@@ -137,7 +142,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
       }
       if (pendingIn) {
         const now = new Date();
-        const wage = calculateWage(pendingIn.timestamp, now, hourlyRate, agreement);
+        const wage = calculateWage(pendingIn.timestamp, now, hourlyRate, agreement, company.businessType);
         shifts.push({
           date: pendingIn.timestamp.toISOString().slice(0, 10),
           inTime: pendingIn.timestamp, outTime: null,

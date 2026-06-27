@@ -5,6 +5,9 @@ import { getHolidayMap, HolidayInfo } from "./icelandic-holidays";
 
 export type CollectiveAgreement = "efling_sa" | "custom";
 export type PayType = "hourly" | "monthly" | "averaged";
+// Only bars/nightclubs pay the extra 55% night premium (Efling/SA); restaurants
+// pay the regular 45% weekend/night rate.
+export type BusinessType = "bar" | "restaurant";
 
 export interface RateInfo {
   multiplier: number;
@@ -42,11 +45,14 @@ export interface WageCalculation {
 }
 
 // ── Efling/SA rate for a specific UTC moment ──────────────────────────────────
-function getEflingSARate(date: Date, holidayMap: Map<string, HolidayInfo>): RateInfo {
+function getEflingSARate(date: Date, holidayMap: Map<string, HolidayInfo>, businessType: BusinessType = "bar"): RateInfo {
   const dateStr = date.toISOString().slice(0, 10);
   const holiday = holidayMap.get(dateStr);
   const dow = date.getUTCDay(); // 0=Sun, 6=Sat
   const hour = date.getUTCHours();
+  // 55% night premium is bar/nightclub-only; restaurants get the regular 45%.
+  const nightMul = businessType === "bar" ? 1.55 : 1.45;
+  const nightCat: RateInfo["category"] = businessType === "bar" ? "naetuvinna" : "helgarvinna";
 
   // Full stórhátíðardagur → ×1.90 all day
   if (holiday?.type === "storhatid") {
@@ -63,15 +69,15 @@ function getEflingSARate(date: Date, holidayMap: Map<string, HolidayInfo>): Rate
     return { multiplier: 1.45, labelIs: `Helgarálag (${holiday.nameIs})`, labelEn: `Holiday rate (${holiday.nameEn})`, category: "helgarvinna" };
   }
 
-  // Saturday — næturalag until 08:00, then helgarálag
+  // Saturday — night premium until 08:00 (55% bars / 45% restaurants), then helgarálag
   if (dow === 6) {
-    if (hour < 8) return { multiplier: 1.55, labelIs: "Næturalag (fösudagsn.)", labelEn: "Night rate (Fri–Sat)", category: "naetuvinna" };
+    if (hour < 8) return { multiplier: nightMul, labelIs: "Næturálag (fösudagsn.)", labelEn: "Night rate (Fri–Sat)", category: nightCat };
     return { multiplier: 1.45, labelIs: "Helgarálag", labelEn: "Weekend rate", category: "helgarvinna" };
   }
 
-  // Sunday — næturalag until 08:00, then helgarálag
+  // Sunday — night premium until 08:00 (55% bars / 45% restaurants), then helgarálag
   if (dow === 0) {
-    if (hour < 8) return { multiplier: 1.55, labelIs: "Næturalag (laugardagsn.)", labelEn: "Night rate (Sat–Sun)", category: "naetuvinna" };
+    if (hour < 8) return { multiplier: nightMul, labelIs: "Næturálag (laugardagsn.)", labelEn: "Night rate (Sat–Sun)", category: nightCat };
     return { multiplier: 1.45, labelIs: "Helgarálag", labelEn: "Weekend rate", category: "helgarvinna" };
   }
 
@@ -134,7 +140,8 @@ export function calculateWage(
   punchIn: Date,
   punchOut: Date,
   hourlyRate = 0,
-  agreement: CollectiveAgreement = "efling_sa"
+  agreement: CollectiveAgreement = "efling_sa",
+  businessType: BusinessType = "bar"
 ): WageCalculation {
   const empty: WageCalculation = {
     totalHours: 0, totalWage: 0, effectiveMultiplier: 1, segments: [],
@@ -149,7 +156,7 @@ export function calculateWage(
 
   while (current < punchOut) {
     const rateInfo = agreement === "efling_sa"
-      ? getEflingSARate(current, holidayMap)
+      ? getEflingSARate(current, holidayMap, businessType)
       : { multiplier: 1.00, labelIs: "Dagvinna", labelEn: "Day rate", category: "dagvinna" as const };
 
     const boundary = getNextBoundary(current, holidayMap);

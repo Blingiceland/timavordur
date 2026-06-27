@@ -12,7 +12,7 @@ async function verifyToken(req: NextRequest) {
 async function getCompany(slug: string) {
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
   if (snap.empty) return null;
-  return { id: snap.docs[0].id, ...snap.docs[0].data() } as { id: string; name: string };
+  return { id: snap.docs[0].id, ...snap.docs[0].data() } as { id: string; name: string; businessType?: "bar" | "restaurant"; wageCategories?: { id: string; dayRate: number }[] };
 }
 
 // GET /api/[slug]/shift-templates
@@ -58,14 +58,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     const staffDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(uid).get();
     const staff = staffDoc.data() || {};
-    const hourlyRate = (staff.hourlyRate as number) || 0;
+    const cat = (company.wageCategories || []).find(c => c.id === staff.wageCategoryId);
+    const hourlyRate = cat ? cat.dayRate : ((staff.hourlyRate as number) || 0);
     const agreement = (staff.collectiveAgreement as "efling_sa" | "custom") || "efling_sa";
 
     // Estimate wage for one typical shift (use today's date as reference)
     const today = new Date().toISOString().slice(0, 10);
     const startISO = `${today}T${startTime}:00Z`;
     const endISO = endTime > startTime ? `${today}T${endTime}:00Z` : `${today}T${endTime}:00Z`;
-    const wage = calculateWage(new Date(startISO), new Date(endISO), hourlyRate, agreement);
+    const wage = calculateWage(new Date(startISO), new Date(endISO), hourlyRate, agreement, company.businessType || "bar");
 
     const ref = await adminDb.collection("tv_companies").doc(company.id).collection("shiftTemplates").add({
       uid, name: staff.name || "",
