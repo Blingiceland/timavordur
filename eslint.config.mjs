@@ -14,6 +14,7 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Standalone Node bootstrap scripts (run with `node`, CommonJS) — not app code.
     "seed-superadmin.js",
+    "seed-demo.js",
   ]),
 ]);
 

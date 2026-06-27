@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Showcase } from "./_home/Showcase";
 
 const CONTACT_EMAIL = "jonb.steinsson@gmail.com";
 
@@ -125,98 +126,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Demo preview ── */}
-      <section style={{ padding: "0 0 100px" }}>
-        <div className="container">
-          <div
-            style={{
-              background: "var(--bg-card)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--radius-xl)",
-              overflow: "hidden",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.5), 0 0 80px rgba(108,99,255,0.08)",
-            }}
-          >
-            {/* Window chrome */}
-            <div
-              style={{
-                background: "var(--bg-surface)",
-                borderBottom: "1px solid var(--border)",
-                padding: "12px 20px",
-                display: "flex",
-                gap: "8px",
-                alignItems: "center",
-              }}
-            >
-              <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#ff5f57" }} />
-              <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#ffbd2e" }} />
-              <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#28c840" }} />
-              <span style={{ marginLeft: 12, color: "var(--text-muted)", fontSize: "0.82rem" }}>
-                timon.bling.is/dillon
-              </span>
-            </div>
-
-            {/* Demo content */}
-            <div
-              style={{
-                padding: "60px 40px",
-                textAlign: "center",
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: "32px",
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    width: 56,
-                    height: 56,
-                    borderRadius: "50%",
-                    background: "linear-gradient(135deg, var(--brand), var(--accent))",
-                    margin: "0 auto 12px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "1.5rem",
-                  }}
-                >
-                  👤
-                </div>
-                <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>Jón Jónsson · Barþjónn</p>
-                <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Mánudagur 23. mars · 10:30</p>
-              </div>
-
-              <button className="punch-btn">
-                <span style={{ fontSize: "1.8rem" }}>→</span>
-                <span style={{ fontSize: "1rem" }}>KLUKKA INN</span>
-              </button>
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: "40px",
-                  color: "var(--text-muted)",
-                  fontSize: "0.85rem",
-                }}
-              >
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "1.3rem", color: "var(--accent)", fontWeight: 700 }}>32.5h</div>
-                  <div>Þetta tímabil</div>
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "1.3rem", color: "var(--text-primary)", fontWeight: 700 }}>8h</div>
-                  <div>Í dag</div>
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: "1.3rem", color: "var(--brand-light)", fontWeight: 700 }}>4</div>
-                  <div>Vaktir</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* ── Showcase ── */}
+      <Showcase />
 
       {/* ── Features ── */}
       <section id="features" style={{ padding: "80px 0" }}>
