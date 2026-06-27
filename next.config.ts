@@ -6,6 +6,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  async rewrites() {
+    return [
+      // Branded staff entry point: staff.dillon.is shows the Dillon portal at its
+      // root while keeping the address bar on staff.dillon.is.
+      { source: "/", has: [{ type: "host", value: "staff.dillon.is" }], destination: "/dillon" },
+    ];
+  },
 };
 
 export default nextConfig;
