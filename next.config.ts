@@ -7,11 +7,16 @@ const nextConfig: NextConfig = {
     root: __dirname,
   },
   async rewrites() {
-    return [
-      // Branded staff entry point: staff.dillon.is shows the Dillon portal at its
-      // root while keeping the address bar on staff.dillon.is.
-      { source: "/", has: [{ type: "host", value: "staff.dillon.is" }], destination: "/dillon" },
-    ];
+    // beforeFiles: runs BEFORE filesystem routes, so it overrides the existing "/"
+    // landing route for this host (a plain-array rewrite is "afterFiles" and would
+    // be ignored because "/" already matches the landing page).
+    return {
+      beforeFiles: [
+        // Branded staff entry point: staff.dillon.is shows the Dillon portal at its
+        // root while keeping the address bar on staff.dillon.is.
+        { source: "/", has: [{ type: "host", value: "staff.dillon.is" }], destination: "/dillon" },
+      ],
+    };
   },
 };
 
