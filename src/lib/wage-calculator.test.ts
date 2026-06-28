@@ -36,10 +36,17 @@ describe("calculateWage — Efling/SA", () => {
     expect(w.breakdown.helgarvinna).toBe(4);
   });
 
-  it("næturálag: Sunday 06–08 → ×1.55", () => {
+  it("næturálag: Sunday 06–08 → ×1.55 (bar, default)", () => {
     const w = calculateWage(d("2026-03-29T06:00:00Z"), d("2026-03-29T08:00:00Z"), RATE);
     expect(w.totalWage).toBe(2 * RATE * 1.55);
     expect(w.breakdown.naetuvinna).toBe(2);
+  });
+
+  it("restaurant: weekend night is 45%, not the bar-only 55%", () => {
+    const w = calculateWage(d("2026-03-29T06:00:00Z"), d("2026-03-29T08:00:00Z"), RATE, "efling_sa", "restaurant");
+    expect(w.totalWage).toBe(2 * RATE * 1.45);
+    expect(w.breakdown.helgarvinna).toBe(2);
+    expect(w.breakdown.naetuvinna).toBe(0);
   });
 
   it("helgarfrídagur: Maundy Thursday → ×1.45 all day", () => {

@@ -58,6 +58,8 @@ export async function getCompanyBySlug(slug: string): Promise<Company | null> {
     registrationFields: d.registrationFields || {},
     requireApproval: d.requireApproval !== false,
     ipRestriction: d.ipRestriction || { enabled: false, allowedIPs: [] },
+    businessType: d.businessType === "restaurant" ? "restaurant" : "bar",
+    wageCategories: d.wageCategories || [],
   };
 }
 

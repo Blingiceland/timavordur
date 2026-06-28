@@ -1,9 +1,10 @@
 "use client";
-import type { Role, Lang, TeamMember } from "./types";
+import type { Role, Lang, TeamMember, WageCategory } from "./types";
 import { ROLES } from "./constants";
 
 // Shared staff detail/pay form used by both the "edit staff" and "add staff" modals.
-export function StaffFormFields({ form, onChange, lang, isOwner }: { form: Partial<TeamMember>; onChange: (v: Partial<TeamMember>) => void; lang: Lang; isOwner: boolean }) {
+export function StaffFormFields({ form, onChange, lang, isOwner, categories = [] }: { form: Partial<TeamMember>; onChange: (v: Partial<TeamMember>) => void; lang: Lang; isOwner: boolean; categories?: WageCategory[] }) {
+  const selectedCat = categories.find(c => c.id === form.wageCategoryId);
   const fields: [keyof TeamMember, string, string, string][] = [
     ["name", "Fullt nafn", "Full name", "Jón Jónsson"],
     ["ssn", "Kennitala", "ID number", "1234567890"],
@@ -46,6 +47,16 @@ export function StaffFormFields({ form, onChange, lang, isOwner }: { form: Parti
         <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "10px" }}>
           {lang === "is" ? "💰 Launastillingar" : "💰 Pay settings"}
         </div>
+        {categories.length > 0 && (
+          <div className="form-group" style={{ marginBottom: "10px" }}>
+            <label className="form-label">{lang === "is" ? "Launaflokkur" : "Wage category"}</label>
+            <select className="form-input" value={form.wageCategoryId || ""} onChange={e => onChange({ ...form, wageCategoryId: e.target.value })}>
+              <option value="">{lang === "is" ? "— Eigin taxti —" : "— Custom rate —"}</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name} ({c.dayRate.toLocaleString("is-IS")} kr)</option>)}
+            </select>
+            {selectedCat && <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 3 }}>{selectedCat.description} · {lang === "is" ? "Dagvinnutaxti" : "Day rate"}: {selectedCat.dayRate.toLocaleString("is-IS")} kr/klst</div>}
+          </div>
+        )}
         <div className="form-group" style={{ marginBottom: "10px" }}>
           <label className="form-label">{lang === "is" ? "Launamáti" : "Pay type"}</label>
           <select className="form-input" value={payType} onChange={e => onChange({ ...form, ...{ payType: e.target.value } } as Partial<TeamMember>)}>
@@ -54,7 +65,7 @@ export function StaffFormFields({ form, onChange, lang, isOwner }: { form: Parti
             <option value="averaged">{lang === "is" ? "Jafnaðarkaup" : "Averaged pay"}</option>
           </select>
         </div>
-        {(payType === "hourly" || payType === "averaged") && (
+        {!selectedCat && (payType === "hourly" || payType === "averaged") && (
           <div className="form-group" style={{ marginBottom: "10px" }}>
             <label className="form-label">{lang === "is" ? "Grunnkaup (kr/klst)" : "Base rate (ISK/hr)"}</label>
             <input type="number" className="form-input" placeholder="1800" min={0}

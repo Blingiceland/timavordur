@@ -5,7 +5,8 @@ import { auth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup, signInWithRedirect, signInWithCustomToken, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { useTheme } from "@/lib/theme";
 
-import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift, SwapRequest, SwapShift } from "./_portal/types";
+import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift, SwapRequest, SwapShift, WageCategory, BusinessType } from "./_portal/types";
+import { DEFAULT_WAGE_CATEGORIES } from "@/lib/wage-categories";
 import {
   roleLabel, roleColor, atLeast,
   ALL_REG_FIELDS, T,
@@ -50,6 +51,8 @@ export default function CompanyPortal() {
   const [saving, setSaving] = useState(false);
   // Settings
   const [regFields, setRegFields] = useState<Record<string, FieldLevel>>(REG_FIELDS_DEFAULTS);
+  const [companyCategories, setCompanyCategories] = useState<WageCategory[]>([]);
+  const [businessType, setBusinessType] = useState<BusinessType>("bar");
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [portalError, setPortalError] = useState("");
@@ -116,6 +119,8 @@ export default function CompanyPortal() {
       if (res.ok) {
         setPortal(d);
         if (d.registrationFields) setRegFields({ ...REG_FIELDS_DEFAULTS, ...d.registrationFields });
+        if (Array.isArray(d.wageCategories)) setCompanyCategories(d.wageCategories);
+        if (d.businessType) setBusinessType(d.businessType);
         if (!d.registered) setRegForm(f => ({ ...f, name: user.displayName || "" }));
       } else {
         console.error("[portal GET error]", res.status, d);
@@ -234,7 +239,7 @@ export default function CompanyPortal() {
     setSettingsSaving(true);
     try {
       const token = await user.getIdToken();
-      await fetch(`/api/${slug}/admin/settings`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ registrationFields: regFields }) });
+      await fetch(`/api/${slug}/admin/settings`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ registrationFields: regFields, businessType, wageCategories: companyCategories }) });
       setSettingsSaved(true); setTimeout(() => setSettingsSaved(false), 3000);
     } catch { /* ignore */ } finally { setSettingsSaving(false); }
   };
@@ -749,6 +754,35 @@ export default function CompanyPortal() {
         {/* ── SETTINGS TAB (owner only) ───────────────────────────────────── */}
         {tab === "settings" && isOwner && (
           <div style={{ maxWidth: "640px" }}>
+            {/* Business type + wage categories */}
+            <div className="card" style={{ padding: "28px", marginBottom: "16px" }}>
+              <h2 style={{ fontSize: "1.05rem", marginBottom: "6px" }}>{lang === "is" ? "Fyrirtækjagerð & launaflokkar" : "Business type & wage categories"}</h2>
+              <p className="text-secondary" style={{ fontSize: "0.85rem", marginBottom: "16px" }}>{lang === "is" ? "Barir/skemmtistaðir greiða 55% næturálag (fös/lau nætur); veitingastaðir 45%." : "Bars/nightclubs pay a 55% night premium; restaurants 45%."}</p>
+              <div style={{ display: "flex", gap: 8, marginBottom: 22 }}>
+                {([["bar", lang === "is" ? "Bar / skemmtistaður" : "Bar / nightclub"], ["restaurant", lang === "is" ? "Veitingastaður" : "Restaurant"]] as const).map(([v, l]) => (
+                  <button key={v} onClick={() => setBusinessType(v)} style={{ flex: 1, padding: "10px", borderRadius: 8, border: `2px solid ${businessType === v ? "var(--brand)" : "var(--border)"}`, background: businessType === v ? "var(--brand-glow)" : "transparent", cursor: "pointer", fontSize: "0.85rem", color: businessType === v ? "var(--brand)" : "var(--text-secondary)", fontWeight: businessType === v ? 600 : 400 }}>{l}</button>
+                ))}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                <label className="form-label" style={{ margin: 0 }}>{lang === "is" ? "Launaflokkar (dagvinnutaxti kr/klst)" : "Wage categories (day rate ISK/hr)"}</label>
+                {companyCategories.length === 0 && <button className="btn btn--secondary btn--sm" onClick={() => setCompanyCategories(DEFAULT_WAGE_CATEGORIES.map(c => ({ ...c })))}>{lang === "is" ? "Hlaða Efling/SA sniðmáti" : "Load Efling/SA template"}</button>}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {companyCategories.map((c, i) => (
+                  <div key={c.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input className="form-input" style={{ flex: "2 1 110px" }} placeholder={lang === "is" ? "Heiti" : "Name"} value={c.name} onChange={e => setCompanyCategories(cs => cs.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
+                    <input className="form-input" style={{ flex: "3 1 150px" }} placeholder={lang === "is" ? "Lýsing" : "Description"} value={c.description} onChange={e => setCompanyCategories(cs => cs.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} />
+                    <input type="number" className="form-input" style={{ width: 88 }} placeholder="kr/klst" value={String(c.dayRate || "")} onChange={e => setCompanyCategories(cs => cs.map((x, j) => j === i ? { ...x, dayRate: parseInt(e.target.value) || 0 } : x))} />
+                    <button className="btn btn--ghost btn--sm" style={{ color: "var(--danger)" }} onClick={() => setCompanyCategories(cs => cs.filter((_, j) => j !== i))}>✕</button>
+                  </div>
+                ))}
+              </div>
+              <button className="btn btn--ghost btn--sm" style={{ marginTop: 10 }} onClick={() => setCompanyCategories(cs => [...cs, { id: crypto.randomUUID(), name: "", description: "", dayRate: 0 }])}>+ {lang === "is" ? "Bæta við flokki" : "Add category"}</button>
+              <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 12 }}>
+                <button className="btn btn--primary" onClick={saveSettings} disabled={settingsSaving}>{settingsSaving ? t.saving : t.save}</button>
+                {settingsSaved && <span style={{ color: "var(--accent)", fontSize: "0.9rem" }}>{t.saved}</span>}
+              </div>
+            </div>
             <div className="card" style={{ padding: "28px", marginBottom: "16px" }}>
               <h2 style={{ fontSize: "1.05rem", marginBottom: "6px" }}>{lang === "is" ? "Skráningarreitir" : "Registration fields"}</h2>
               <p className="text-secondary" style={{ fontSize: "0.85rem", marginBottom: "20px" }}>{lang === "is" ? "Veldu hvaða upplýsingar starfsmenn fylla út við skráningu" : "Choose which fields staff fill in when registering"}</p>
@@ -806,7 +840,7 @@ export default function CompanyPortal() {
                 </div>
               </div>
             </div>
-            <StaffFormFields form={editForm} onChange={setEditForm} lang={lang} isOwner={isOwner} />
+            <StaffFormFields form={editForm} onChange={setEditForm} lang={lang} isOwner={isOwner} categories={companyCategories} />
             <div style={{ display: "flex", gap: "8px", marginTop: "16px", paddingTop: "16px", borderTop: "1px solid var(--border)" }}>
               <button className="btn btn--primary" style={{ flex: 1, justifyContent: "center" }} disabled={saving} onClick={() => doPortalAction("PATCH", { uid: editMember.uid, action: "update", updates: editForm }, "✅ Vistað!")}>{saving ? t.saving : t.save}</button>
               <button className="btn btn--sm" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} disabled={saving} onClick={() => { if (confirm(`Eyða ${editMember.name}?`)) doPortalAction("PATCH", { uid: editMember.uid, action: "delete" }, "Eytt"); }}>{t.delete}</button>
@@ -833,7 +867,7 @@ export default function CompanyPortal() {
                 <input type="text" inputMode="numeric" maxLength={4} className="form-input" placeholder={lang === "is" ? "4 tölustafir" : "4 digits"} value={addForm.password || ""} onChange={e => setAddForm(f => ({ ...f, password: e.target.value.replace(/\D/g, "") }))} required />
               </div>
             </div>
-            <StaffFormFields form={addForm} onChange={setAddForm} lang={lang} isOwner={isOwner} />
+            <StaffFormFields form={addForm} onChange={setAddForm} lang={lang} isOwner={isOwner} categories={companyCategories} />
             <button className="btn btn--primary" style={{ width: "100%", justifyContent: "center", marginTop: "16px" }} disabled={saving} onClick={() => doPortalAction("PUT", addForm, "✅ Starfsmaður bætt við!")}>{saving ? t.saving : lang === "is" ? "Bæta við" : "Add"}</button>
           </div>
         </div>
