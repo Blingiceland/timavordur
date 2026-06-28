@@ -34,10 +34,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     if (s.authType !== "password" || !s.passwordHash) return badCreds;
     if (!verifyPassword(password, s.passwordHash, s.passwordSalt)) return badCreds;
 
-    if ((s.status || "approved") !== "approved") {
-      return NextResponse.json({ error: s.status || "not_approved" }, { status: 403 });
-    }
-
+    // Issue a token even if pending/rejected — the portal shows the appropriate
+    // status screen and blocks punching until approved.
     const token = await adminAuth.createCustomToken(snap.docs[0].id);
     return NextResponse.json({ token });
   } catch (err) {
