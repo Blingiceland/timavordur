@@ -4,7 +4,19 @@ import type { Role, Status, FieldLevel, WageCategory, BusinessType } from "@/lib
 
 export type { Role, Status, FieldLevel, WageCategory, BusinessType };
 export type Lang = "is" | "en";
-export type Tab = "clock" | "team" | "staff" | "settings" | "swaps";
+export type Tab = "clock" | "team" | "staff" | "settings" | "swaps" | "corrections";
+
+// ── Punch corrections ────────────────────────────────────────────────────────
+export interface Correction {
+  id: string;
+  uid: string;
+  name: string;
+  date: string;
+  inTime?: string | null;
+  outTime?: string | null;
+  reason?: string;
+  status: string;
+}
 
 // ── Shift swaps ──────────────────────────────────────────────────────────────
 export interface SwapShift {
