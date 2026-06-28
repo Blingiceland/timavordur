@@ -5,7 +5,7 @@ import { auth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup, signInWithRedirect, signInWithCustomToken, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { useTheme } from "@/lib/theme";
 
-import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift, SwapRequest, SwapShift, WageCategory, BusinessType } from "./_portal/types";
+import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift, SwapRequest, SwapShift, WageCategory, BusinessType, Correction } from "./_portal/types";
 import { DEFAULT_WAGE_CATEGORIES } from "@/lib/wage-categories";
 import {
   roleLabel, roleColor, atLeast,
@@ -33,6 +33,9 @@ export default function CompanyPortal() {
   const [swapMode, setSwapMode] = useState<"cover" | "swap">("cover");
   const [swapToUid, setSwapToUid] = useState("");
   const [swapToId, setSwapToId] = useState("");
+  // Punch corrections
+  const [corrections, setCorrections] = useState<Correction[]>([]);
+  const [corrForm, setCorrForm] = useState({ date: "", inTime: "", outTime: "", reason: "" });
   // Staff username/password sign-in
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loggingIn, setLoggingIn] = useState(false);
@@ -160,9 +163,19 @@ export default function CompanyPortal() {
     } catch { /* non-critical */ }
   }, [user, slug]);
 
+  const fetchCorrections = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/${slug}/corrections`, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json();
+      if (res.ok) setCorrections(d.corrections || []);
+    } catch { /* non-critical */ }
+  }, [user, slug]);
+
   useEffect(() => {
-    if (user && portal?.status === "approved") { fetchShifts(); fetchSwaps(); }
-  }, [user, portal?.status, fetchShifts, fetchSwaps]);
+    if (user && portal?.status === "approved") { fetchShifts(); fetchSwaps(); fetchCorrections(); }
+  }, [user, portal?.status, fetchShifts, fetchSwaps, fetchCorrections]);
 
   const showMsg = (text: string, ok = true) => { setMsg({ text, ok }); setTimeout(() => setMsg(null), 4000); };
 
@@ -198,6 +211,29 @@ export default function CompanyPortal() {
       const res = await fetch(`/api/${slug}/swaps`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ id, action }) });
       const d = await res.json();
       if (res.ok) { showMsg(lang === "is" ? "✅ Uppfært" : "✅ Updated"); await Promise.all([fetchSwaps(), fetchShifts()]); }
+      else showMsg(d.error || "Villa", false);
+    } catch { showMsg(lang === "en" ? "Network error" : "Netvilla", false); }
+  };
+
+  const doCorrectionAction = async (id: string, action: string) => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/${slug}/corrections`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ id, action }) });
+      const d = await res.json();
+      if (res.ok) { showMsg(lang === "is" ? "✅ Uppfært" : "✅ Updated"); await Promise.all([fetchCorrections(), fetchPortal()]); }
+      else showMsg(d.error || "Villa", false);
+    } catch { showMsg(lang === "en" ? "Network error" : "Netvilla", false); }
+  };
+
+  const createCorrection = async () => {
+    if (!user) return;
+    if (!corrForm.date || (!corrForm.inTime && !corrForm.outTime)) { showMsg(lang === "is" ? "Veldu dag og a.m.k. einn tíma" : "Pick a date and at least one time", false); return; }
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/${slug}/corrections`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(corrForm) });
+      const d = await res.json();
+      if (res.ok) { showMsg(lang === "is" ? "✅ Beiðni send" : "✅ Request sent"); setCorrForm({ date: "", inTime: "", outTime: "", reason: "" }); await fetchCorrections(); }
       else showMsg(d.error || "Villa", false);
     } catch { showMsg(lang === "en" ? "Network error" : "Netvilla", false); }
   };
@@ -470,6 +506,11 @@ export default function CompanyPortal() {
   const myRequests = swaps.filter(s => s.fromUid === user.uid && (s.status === "pending" || s.status === "accepted"));
   const swapAwaitingApproval = swaps.filter(s => s.status === "accepted");
   const swapBadge = canSeeTeam ? swapAwaitingApproval.length : (openCovers.length + swapsToMe.length);
+  // Corrections-derived
+  const myCorrections = corrections.filter(c => c.uid === user.uid);
+  const pendingCorrections = corrections; // API already returns only pending; managers get all, staff get own
+  const corrBadge = canSeeTeam ? pendingCorrections.length : myCorrections.length;
+  const fmtCorrDate = (ymd: string) => new Date(ymd + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
   const fmtSwapShift = (sh: SwapShift) => {
     const d = new Date(sh.date + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
     return `${d} ${sh.startTime}–${sh.endTime}${sh.endTime <= sh.startTime ? " (+1)" : ""}`;
@@ -481,6 +522,7 @@ export default function CompanyPortal() {
     [
       { key: "clock" as Tab, label: t.tabClock, show: true },
       { key: "swaps" as Tab, label: lang === "is" ? "Vaktaskipti" : "Swaps", show: true },
+      { key: "corrections" as Tab, label: lang === "is" ? "Leiðréttingar" : "Corrections", show: true },
       { key: "team" as Tab, label: t.tabTeam, show: canSeeTeam },
       { key: "staff" as Tab, label: t.tabStaff, show: canManage },
       { key: "settings" as Tab, label: t.tabSettings, show: isOwner },
@@ -535,6 +577,7 @@ export default function CompanyPortal() {
                 {tb.label}
                 {tb.key === "staff" && pendingStaff.length > 0 && <span style={{ marginLeft: "6px", background: tab === tb.key ? "rgba(255,255,255,0.2)" : "var(--border)", borderRadius: "20px", padding: "1px 7px", fontSize: "0.75rem" }}>{pendingStaff.length}</span>}
                 {tb.key === "swaps" && swapBadge > 0 && <span style={{ marginLeft: "6px", background: tab === tb.key ? "rgba(255,255,255,0.2)" : "var(--border)", borderRadius: "20px", padding: "1px 7px", fontSize: "0.75rem" }}>{swapBadge}</span>}
+                {tb.key === "corrections" && corrBadge > 0 && <span style={{ marginLeft: "6px", background: tab === tb.key ? "rgba(255,255,255,0.2)" : "var(--border)", borderRadius: "20px", padding: "1px 7px", fontSize: "0.75rem" }}>{corrBadge}</span>}
               </button>
             ))}
           </div>
@@ -690,6 +733,78 @@ export default function CompanyPortal() {
                         <span style={{ marginLeft: 8, fontSize: "0.75rem", color: "var(--text-muted)" }}>· {swapStatusLabel(r.status)}</span>
                       </div>
                       <button className="btn btn--ghost btn--sm" onClick={() => doSwapAction(r.id, "cancel")}>{lang === "is" ? "Hætta við" : "Cancel"}</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── CORRECTIONS TAB ────────────────────────────────────────────── */}
+        {tab === "corrections" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 640 }}>
+            {/* Submit a correction */}
+            <div className="card" style={{ padding: 20 }}>
+              <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 6 }}>{lang === "is" ? "Leiðrétting á stimplun" : "Punch correction"}</div>
+              <p className="text-secondary" style={{ fontSize: "0.85rem", marginBottom: 14 }}>{lang === "is" ? "Gleymdir þú að stimpla inn eða út? Sendu leiðréttingu sem vaktstjóri/eigandi samþykkir." : "Forgot to clock in or out? Send a correction for a manager/owner to approve."}</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">{lang === "is" ? "Dagur" : "Date"}</label>
+                  <input type="date" className="form-input" value={corrForm.date} onChange={e => setCorrForm(f => ({ ...f, date: e.target.value }))} />
+                </div>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                    <label className="form-label">{lang === "is" ? "Inn" : "In"}</label>
+                    <input type="time" className="form-input" value={corrForm.inTime} onChange={e => setCorrForm(f => ({ ...f, inTime: e.target.value }))} />
+                  </div>
+                  <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                    <label className="form-label">{lang === "is" ? "Út" : "Out"}</label>
+                    <input type="time" className="form-input" value={corrForm.outTime} onChange={e => setCorrForm(f => ({ ...f, outTime: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label className="form-label">{lang === "is" ? "Ástæða" : "Reason"}</label>
+                  <input className="form-input" placeholder={lang === "is" ? "t.d. gleymdi að stimpla út" : "e.g. forgot to clock out"} value={corrForm.reason} onChange={e => setCorrForm(f => ({ ...f, reason: e.target.value }))} />
+                </div>
+                <button className="btn btn--primary" onClick={createCorrection} style={{ justifyContent: "center" }}>{lang === "is" ? "Senda leiðréttingu" : "Send correction"}</button>
+              </div>
+            </div>
+
+            {/* Manager approvals */}
+            {canSeeTeam && corrections.length > 0 && (
+              <div className="card card--brand" style={{ padding: 20 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 12 }}>✅ {lang === "is" ? "Til samþykktar" : "To approve"}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {corrections.map(c => (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "10px 12px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                      <div style={{ fontSize: "0.85rem" }}>
+                        <strong>{c.name}</strong> · {fmtCorrDate(c.date)}{" "}
+                        {c.inTime ? `${lang === "is" ? "Inn" : "In"} ${c.inTime}` : ""}{c.inTime && c.outTime ? " · " : ""}{c.outTime ? `${lang === "is" ? "Út" : "Out"} ${c.outTime}` : ""}
+                        {c.reason && <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.reason}</div>}
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => doCorrectionAction(c.id, "approve")}>{lang === "is" ? "Samþykkja" : "Approve"}</button>
+                        <button className="btn btn--sm" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} onClick={() => doCorrectionAction(c.id, "reject")}>{lang === "is" ? "Hafna" : "Reject"}</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Staff's own pending */}
+            {!canSeeTeam && myCorrections.length > 0 && (
+              <div className="card" style={{ padding: 20 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 12 }}>{lang === "is" ? "Mínar beiðnir" : "My requests"}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {myCorrections.map(c => (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", padding: "10px 12px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                      <div style={{ fontSize: "0.85rem" }}>
+                        {fmtCorrDate(c.date)} · {c.inTime ? `${lang === "is" ? "Inn" : "In"} ${c.inTime}` : ""}{c.inTime && c.outTime ? " · " : ""}{c.outTime ? `${lang === "is" ? "Út" : "Out"} ${c.outTime}` : ""}
+                        <span style={{ marginLeft: 8, fontSize: "0.75rem", color: "var(--text-muted)" }}>· {lang === "is" ? "Í bið" : "Pending"}</span>
+                      </div>
+                      <button className="btn btn--ghost btn--sm" onClick={() => doCorrectionAction(c.id, "cancel")}>{lang === "is" ? "Hætta við" : "Cancel"}</button>
                     </div>
                   ))}
                 </div>
