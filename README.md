@@ -62,6 +62,29 @@ Firebase Auth.
   reglunum). Birtu reglur með `firebase deploy --only firestore:rules`.
 - `service-account-key.json`, `.env*` og `*service-account*.json` eru git-hunsuð.
 
+## Afrit (backups)
+
+Sjálfvirk Firestore-afrit eru virk á verkefninu (sett upp 3. júlí 2026 með
+firebase CLI, innskráður eigandi — service-account lykillinn hefur *ekki*
+réttindi í þetta):
+
+- **Daglegt** afrit, geymt í 7 daga
+- **Vikulegt** afrit (aðfaranótt mánudags), geymt í 8 vikur
+
+```bash
+firebase firestore:backups:schedules:list --project timavordur   # áætlanir
+firebase firestore:backups:list --project timavordur             # tekin afrit
+```
+
+**Endurheimt** fer í *nýjan* gagnagrunn (skrifar ekki yfir þann sem er í notkun):
+
+```bash
+firebase firestore:databases:restore --project timavordur \
+  --backup <backup-nafn úr listanum> --database endurheimt-YYYYMMDD
+```
+
+Skoða má afritin líka í Google Cloud Console → Firestore → Disaster Recovery.
+
 ## Skipanir
 
 | Skipun           | Lýsing |

@@ -37,8 +37,9 @@ rekstraröryggi.
 - [ ] **Onboarda Dillon í alvöru**: fyrirtæki, launaflokkar skv. töxtum,
       businessType=bar, IP-takmörkun á WiFi staðarins, starfsfólk skráir sig
       (PIN-leiðin fyrir þau sem ekki nota Google)
-- [ ] **Sjálfvirk afrit af Firestore** (scheduled export í Cloud Storage,
-      daglegt). Þegar alvöru launagögn eru komin inn má ekkert týnast.
+- [x] **Sjálfvirk afrit af Firestore** — gert 3. júlí 2026: daglegt afrit
+      (7 daga geymsla) + vikulegt (8 vikna geymsla) með innbyggðum Firestore
+      scheduled backups. Sjá „Afrit" í README.
 - [ ] **Villuvöktun**: Sentry (eða a.m.k. structured logging á API-leiðum)
       svo bilanir sjáist áður en starfsfólk kvartar
 - [ ] **Persónuvernd**: kerfið geymir kennitölur og bankaupplýsingar
