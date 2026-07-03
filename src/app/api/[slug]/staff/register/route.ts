@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { cleanStr, isOptionalKennitala } from "@/lib/validation";
+import { reportApiError } from "@/lib/report-error";
 
 async function verifyToken(req: NextRequest) {
   const auth = req.headers.get("Authorization");
@@ -72,7 +73,7 @@ export async function POST(
       status: requireApproval ? "pending" : "approved",
     });
   } catch (err) {
-    console.error("[staff/register POST]", err);
+    await reportApiError("staff/register POST", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

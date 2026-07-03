@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
+import { reportApiError } from "@/lib/report-error";
 
 // POST /api/superadmin/auth — verify token and check superadmin role
 export async function POST(req: NextRequest) {
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
       name: userData.name || decoded.name,
     });
   } catch (err) {
-    console.error("[superadmin/auth]", err);
+    await reportApiError("superadmin/auth", err);
     return NextResponse.json({ error: "Auth villa" }, { status: 401 });
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { reportApiError } from "@/lib/report-error";
 
 async function getCompanyId(slug: string): Promise<string | null> {
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
@@ -62,7 +63,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     return NextResponse.json({ isRegistered: true, status: "approved", isPunchedIn, todayHours, periodHours, shifts, name: staffData.name || decoded.name || "", companyName: companyData.name || slug });
   } catch (err) {
-    console.error("[punch GET]", err);
+    await reportApiError("punch GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -107,7 +108,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     return NextResponse.json({ type: newType, time: `${String(now.getUTCHours()).padStart(2,"0")}:${String(now.getUTCMinutes()).padStart(2,"0")}` });
   } catch (err) {
-    console.error("[punch POST]", err);
+    await reportApiError("punch POST", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

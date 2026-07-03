@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
+import { reportApiError } from "@/lib/report-error";
 
 async function getCompany(slug: string) {
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
@@ -77,7 +78,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     return NextResponse.json({ companyName: company.name, isAdmin: true, staffList });
   } catch (err) {
-    console.error("[admin GET]", err);
+    await reportApiError("admin GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -109,7 +110,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     return NextResponse.json({ success: true, uid });
   } catch (err) {
-    console.error("[admin POST]", err);
+    await reportApiError("admin POST", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { calculateWage } from "@/lib/wage-calculator";
 import { isTime, isDaysOfWeek, isDate } from "@/lib/validation";
+import { reportApiError } from "@/lib/report-error";
 
 async function verifyToken(req: NextRequest) {
   const auth = req.headers.get("Authorization");
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     const templates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => String((a as Record<string,unknown>).name || "").localeCompare(String((b as Record<string,unknown>).name || "")));
     return NextResponse.json({ templates });
-  } catch (err) { console.error(err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
+  } catch (err) { await reportApiError("shift-templates GET", err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
 }
 
 // POST /api/[slug]/shift-templates — create template (manager+)
@@ -82,7 +83,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       createdAt: FieldValue.serverTimestamp(),
     });
     return NextResponse.json({ id: ref.id });
-  } catch (err) { console.error(err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
+  } catch (err) { await reportApiError("shift-templates POST", err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
 }
 
 // DELETE /api/[slug]/shift-templates — deactivate template
@@ -99,5 +100,5 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ s
     if (!templateId) return NextResponse.json({ error: "templateId required" }, { status: 400 });
     await adminDb.collection("tv_companies").doc(company.id).collection("shiftTemplates").doc(templateId).update({ active: false });
     return NextResponse.json({ ok: true });
-  } catch (err) { console.error(err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
+  } catch (err) { await reportApiError("shift-templates DELETE", err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
 }

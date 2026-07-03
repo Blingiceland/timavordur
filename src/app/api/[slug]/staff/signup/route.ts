@@ -5,6 +5,7 @@ import { getCompanyBySlug } from "@/lib/auth";
 import { hashPassword } from "@/lib/password";
 import { isUsername, isPin, cleanStr } from "@/lib/validation";
 import { FieldValue } from "firebase-admin/firestore";
+import { reportApiError } from "@/lib/report-error";
 
 // POST /api/[slug]/staff/signup — self sign-up with a chosen username + 4-digit PIN.
 // New accounts are "pending" until an admin approves (unless the company has turned
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     const token = await adminAuth.createCustomToken(uid);
     return NextResponse.json({ ok: true, status, token });
   } catch (err) {
-    console.error("[staff/signup]", err);
+    await reportApiError("staff/signup", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

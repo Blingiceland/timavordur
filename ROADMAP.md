@@ -40,8 +40,10 @@ rekstraröryggi.
 - [x] **Sjálfvirk afrit af Firestore** — gert 3. júlí 2026: daglegt afrit
       (7 daga geymsla) + vikulegt (8 vikna geymsla) með innbyggðum Firestore
       scheduled backups. Sjá „Afrit" í README.
-- [ ] **Villuvöktun**: Sentry (eða a.m.k. structured logging á API-leiðum)
-      svo bilanir sjáist áður en starfsfólk kvartar
+- [x] **Villuvöktun** — gert 3. júlí 2026: allar API-villur fara gegnum
+      `reportApiError()` sem vistar þær í `tv_errors` í Firestore (30 daga
+      geymsla). Sjá „Villuvöktun" í README. Sentry má bæta við síðar ef þörf
+      krefur.
 - [ ] **Persónuvernd**: kerfið geymir kennitölur og bankaupplýsingar
       starfsfólks → þarf persónuverndarstefnu/upplýsingablað til starfsfólks
       strax (líka fyrir eigin notkun), og vinnslusamning ef/þegar aðrir nota það

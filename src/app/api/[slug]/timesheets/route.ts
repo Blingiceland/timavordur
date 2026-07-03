@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
 import { calculateWage, calculateEmployerCost } from "@/lib/wage-calculator";
+import { reportApiError } from "@/lib/report-error";
 
 async function verifyToken(req: NextRequest) {
   const auth = req.headers.get("Authorization");
@@ -200,7 +201,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     });
 
   } catch (err) {
-    console.error("[timesheets GET]", err);
+    await reportApiError("timesheets GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

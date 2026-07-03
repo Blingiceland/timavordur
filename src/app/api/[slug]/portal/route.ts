@@ -5,6 +5,7 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { calculateWage } from "@/lib/wage-calculator";
 import { hashPassword } from "@/lib/password";
 import { isUsername, isPin, cleanStr } from "@/lib/validation";
+import { reportApiError } from "@/lib/report-error";
 
 // ── Role system ────────────────────────────────────────────────────────────
 export type Role = "staff" | "manager" | "admin" | "owner";
@@ -134,7 +135,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     return NextResponse.json(base);
   } catch (err) {
-    console.error("[portal GET]", err);
+    await reportApiError("portal GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -197,7 +198,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     return NextResponse.json({ type: newType, time: fmt24(now) });
   } catch (err) {
-    console.error("[portal POST]", err);
+    await reportApiError("portal POST", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -254,7 +255,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
 
     return NextResponse.json({ error: "Óþekkt aðgerð" }, { status: 400 });
   } catch (err) {
-    console.error("[portal PATCH]", err);
+    await reportApiError("portal PATCH", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -306,7 +307,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ slug
 
     return NextResponse.json({ ok: true, uid });
   } catch (err) {
-    console.error("[portal PUT]", err);
+    await reportApiError("portal PUT", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

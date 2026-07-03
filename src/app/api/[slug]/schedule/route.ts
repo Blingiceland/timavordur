@@ -3,6 +3,7 @@ import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { calculateWage } from "@/lib/wage-calculator";
 import { isDate, isTime } from "@/lib/validation";
+import { reportApiError } from "@/lib/report-error";
 
 async function verifyToken(req: NextRequest) {
   const auth = req.headers.get("Authorization");
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
 
     return NextResponse.json({ shifts: allShifts, myRole });
   } catch (err) {
-    console.error("[schedule GET]", err);
+    await reportApiError("schedule GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -167,7 +168,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     return NextResponse.json({ id: ref.id });
   } catch (err) {
-    console.error("[schedule POST]", err);
+    await reportApiError("schedule POST", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -193,7 +194,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ s
     await adminDb.collection("tv_companies").doc(company.id).collection("shifts").doc(shiftId).delete();
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("[schedule DELETE]", err);
+    await reportApiError("schedule DELETE", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

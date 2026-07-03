@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { verifyCompanyRole, isAccessError, atLeast } from "@/lib/auth";
 import { FieldValue } from "firebase-admin/firestore";
+import { reportApiError } from "@/lib/report-error";
 
 // Shift swapping: staff arrange a "cover" (give a shift away) or a direct "swap"
 // (exchange two shifts); a manager always approves before anything is applied.
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     });
     return NextResponse.json({ requests: visible, myRole: role });
   } catch (err) {
-    console.error("[swaps GET]", err);
+    await reportApiError("swaps GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -105,7 +106,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     const ref = await swapsCol(company.id).add(base);
     return NextResponse.json({ id: ref.id });
   } catch (err) {
-    console.error("[swaps POST]", err);
+    await reportApiError("swaps POST", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -183,7 +184,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
         return NextResponse.json({ error: "Óþekkt aðgerð" }, { status: 400 });
     }
   } catch (err) {
-    console.error("[swaps PATCH]", err);
+    await reportApiError("swaps PATCH", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

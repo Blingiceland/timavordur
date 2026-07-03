@@ -62,6 +62,18 @@ Firebase Auth.
   reglunum). Birtu reglur með `firebase deploy --only firestore:rules`.
 - `service-account-key.json`, `.env*` og `*service-account*.json` eru git-hunsuð.
 
+## Villuvöktun
+
+Óvæntar villur í API-leiðum fara gegnum `reportApiError()`
+(`src/lib/report-error.ts`): þær eru skrifaðar í console (Vercel-logga, sem
+eyðast fljótt) **og** vistaðar í `tv_errors`-safnið í Firestore með leið,
+skilaboðum, stack og tímastimpli. Skoða: Firebase Console → Firestore →
+`tv_errors`, raðað eftir `createdAt`.
+
+Hvert skjal ber `expiresAt` (30 dagar) svo hægt sé að setja TTL-reglu á
+safnið (Google Cloud Console → Firestore → TTL, svæði `expiresAt`) — án
+hennar safnast skjölin bara upp, sem er meinlaust í þessu umfangi.
+
 ## Afrit (backups)
 
 Sjálfvirk Firestore-afrit eru virk á verkefninu (sett upp 3. júlí 2026 með

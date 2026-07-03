@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { verifySuperAdmin } from "@/lib/auth";
 import { FieldValue } from "firebase-admin/firestore";
 import type { Company } from "@/lib/types";
+import { reportApiError } from "@/lib/report-error";
 
 // Slug must be a short, url-safe, lowercase identifier (used as /[slug] path).
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ companies });
   } catch (err) {
-    console.error("[companies GET]", err);
+    await reportApiError("companies GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest) {
       staffCount: 0,
     });
   } catch (err) {
-    console.error("[companies POST]", err);
+    await reportApiError("companies POST", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

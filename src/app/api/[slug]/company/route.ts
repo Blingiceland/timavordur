@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
+import { reportApiError } from "@/lib/report-error";
 
 export async function GET(
   _req: NextRequest,
@@ -24,7 +25,7 @@ export async function GET(
       requireApproval: data.requireApproval !== false,
     });
   } catch (err) {
-    console.error("[company GET]", err);
+    await reportApiError("company GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

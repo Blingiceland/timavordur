@@ -3,6 +3,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { verifyCompanyRole, isAccessError, atLeast } from "@/lib/auth";
 import { isDate, isTime, cleanStr } from "@/lib/validation";
 import { FieldValue } from "firebase-admin/firestore";
+import { reportApiError } from "@/lib/report-error";
 
 // Punch corrections: a staff member who forgot to clock in/out submits a request
 // (date + proposed in/out time + reason); a manager/owner approves, which creates
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ slug
     visible.sort((a, b) => String(b.date).localeCompare(String(a.date)));
     return NextResponse.json({ corrections: visible, myRole: role });
   } catch (err) {
-    console.error("[corrections GET]", err);
+    await reportApiError("corrections GET", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -70,7 +71,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     });
     return NextResponse.json({ id: ref.id });
   } catch (err) {
-    console.error("[corrections POST]", err);
+    await reportApiError("corrections POST", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -135,7 +136,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
 
     return NextResponse.json({ error: "Óþekkt aðgerð" }, { status: 400 });
   } catch (err) {
-    console.error("[corrections PATCH]", err);
+    await reportApiError("corrections PATCH", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

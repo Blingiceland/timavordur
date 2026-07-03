@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { reportApiError } from "@/lib/report-error";
 
 // DEV ONLY — seed mock punch records for testing
 // POST /api/[slug]/dev-seed  (admin/owner only)
@@ -94,7 +95,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 
     return NextResponse.json({ ok: true, message: `Mock starfsmaður "${MOCK_NAME}" búinn til með ${shifts.length} vöktum (þ.m.t. Skírdag og Föstudaginn langa)` });
   } catch (err) {
-    console.error("[dev-seed]", err);
+    await reportApiError("dev-seed", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
@@ -120,7 +121,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ s
     await b2.commit();
     return NextResponse.json({ ok: true, message: "Mock gögn eytt" });
   } catch (err) {
-    console.error("[dev-seed DELETE]", err);
+    await reportApiError("dev-seed DELETE", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

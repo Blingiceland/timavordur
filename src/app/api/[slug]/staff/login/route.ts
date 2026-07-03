@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminDb, adminAuth } from "@/lib/firebase-admin";
 import { getCompanyBySlug } from "@/lib/auth";
 import { verifyPassword } from "@/lib/password";
+import { reportApiError } from "@/lib/report-error";
 
 // POST /api/[slug]/staff/login — username/password sign-in for staff.
 // On success returns a Firebase custom token the client exchanges via
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     const token = await adminAuth.createCustomToken(snap.docs[0].id);
     return NextResponse.json({ token });
   } catch (err) {
-    console.error("[staff/login]", err);
+    await reportApiError("staff/login", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
