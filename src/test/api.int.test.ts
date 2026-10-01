@@ -41,6 +41,13 @@ async function pinAccount(slug: string, companyId: string, username: string, pin
   return { uid, token: await exchangeCustomToken(r.body.token as string) };
 }
 
+/** The last PIN e-mailed to an address (emulator test mailbox). */
+async function mailedPin(to: string) {
+  const snap = await adminDb.collection("tv_test_mail").where("to", "==", to).get();
+  const last = snap.docs.map((d) => d.data()).sort((a, b) => b.at.toMillis() - a.at.toMillis())[0];
+  return { pin: /PIN: (\d{4})/.exec(last.text)![1], mail: last };
+}
+
 beforeEach(async () => {
   await resetEmulator();
   await seedCompany(A, "alpha");
@@ -162,7 +169,7 @@ describe("PIN login", () => {
     expect(r.body.error).toBe("session_revoked");
   });
   it("signup is always staff + pending and usernames are unique under concurrency", async () => {
-    const rs = await Promise.all([1, 2, 3].map(() => call(signup.POST, { slug: "alpha", method: "POST", body: { username: "sama", pin: "4826", name: "Sama", role: "owner" } })));
+    const rs = await Promise.all([1, 2, 3].map(() => call(signup.POST, { slug: "alpha", method: "POST", body: { username: "sama", email: "sama@x.is", name: "Sama", role: "owner" } })));
     expect(rs.filter((r) => r.status === 200)).toHaveLength(1);
     const docs = await adminDb.collection("tv_companies").doc(A).collection("staff").where("username", "==", "sama").get();
     expect(docs.size).toBe(1);
@@ -347,26 +354,31 @@ describe("two workplaces with separate kennitala sharing logins (Dillon + Pablo)
   });
 
   it("sign-up for both workplaces creates one login and a membership at each", async () => {
-    const r = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "lara", pin: "4826", name: "Lára", companies: ["dillon", "pablo"] } });
+    const r = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "lara", email: "lara@x.is", name: "Lára", companies: ["dillon", "pablo"] } });
     expect(r.status).toBe(200);
     expect(r.body.statuses).toEqual({ dillon: "pending", pablo: "approved" });
+    expect(r.body.pinEmailed).toBe(true); // Pablo needs no approval → PIN sent at once
+    expect(r.body.token).toBeUndefined();
     const uid = (await adminDb.doc(`tv_groups/${G}/usernames/lara`).get()).data()!.uid;
     expect((await adminDb.doc(`tv_companies/${D}/staff/${uid}`).get()).data()).toMatchObject({ status: "pending", role: "staff" });
     expect((await adminDb.doc(`tv_companies/${Pb}/staff/${uid}`).get()).exists).toBe(true);
     expect((await adminDb.doc(`tv_companies/${D}/staff/${uid}`).get()).data()!.passwordHash).toBeUndefined();
-    const bad = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "xxx2", pin: "4826", name: "X", companies: ["alpha"] } });
+    const bad = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "xxx2", email: "x2@x.is", name: "X", companies: ["alpha"] } });
     expect(bad.body.error).toBe("invalid_companies"); // a company outside the group
-    expect((await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "xxx3", pin: "1234", name: "X" } })).body.error).toBe("pin_too_simple");
+    expect((await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "xxx3", name: "X" } })).body.error).toBe("invalid_email");
   });
 
   it("one login works at both; punching in at one blocks the other; the portal shows where", async () => {
-    const s = await call(signup.POST, { slug: "pablo", method: "POST", body: { username: "lara", pin: "4826", name: "Lára", companies: ["dillon", "pablo"] } });
-    const token = await exchangeCustomToken(s.body.token as string);
+    await call(signup.POST, { slug: "pablo", method: "POST", body: { username: "lara", email: "lara@x.is", name: "Lára", companies: ["dillon", "pablo"] } });
     const uid = (await adminDb.doc(`tv_groups/${G}/usernames/lara`).get()).data()!.uid as string;
-    await call(portal.PATCH, { slug: "dillon", method: "PATCH", token: jon.token, body: { uid, action: "approve" } });
+    const { pin } = await mailedPin("lara@x.is");
+    // Approval at Dillon does NOT issue a second PIN (she already has one).
+    const ap = await call(portal.PATCH, { slug: "dillon", method: "PATCH", token: jon.token, body: { uid, action: "approve" } });
+    expect(ap.body.pinEmailed).toBeUndefined();
     // login through the other workplace's address gives the same account
-    const l = await call(login.POST, { slug: "dillon", method: "POST", body: { username: "lara", password: "4826" } });
+    const l = await call(login.POST, { slug: "dillon", method: "POST", body: { username: "lara", password: pin } });
     expect(l.status).toBe(200);
+    const token = await exchangeCustomToken(l.body.token as string);
     const g = await call(portal.GET, { slug: "dillon", token });
     expect((g.body.memberships as { slug: string }[]).map((m) => m.slug).sort()).toEqual(["dillon", "pablo"]);
     expect((await call(portal.POST, { slug: "dillon", method: "POST", token, body: { action: "in", idempotencyKey: key() } })).status).toBe(200);
@@ -383,9 +395,8 @@ describe("two workplaces with separate kennitala sharing logins (Dillon + Pablo)
   });
 
   it("a group login is useless in a company outside the group", async () => {
-    const s = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "lara", pin: "4826", name: "Lára" } });
-    const token = await exchangeCustomToken(s.body.token as string);
-    const r = await call(schedule.GET, { slug: "alpha", path: "schedule", token });
+    const pin = await pinAccount("dillon", D, "lara", "4826", "staff", G);
+    const r = await call(schedule.GET, { slug: "alpha", path: "schedule", token: pin.token });
     expect(r.status).toBe(403);
     expect(r.body.error).toBe("wrong_tenant");
   });
@@ -416,5 +427,64 @@ describe("two workplaces with separate kennitala sharing logins (Dillon + Pablo)
     await seedStaff(Pb, dOnlyAdmin.uid, { role: "owner", authType: "google" });
     const r = await call(portal.PATCH, { slug: "dillon", method: "PATCH", token: jon.token, body: { uid: dOnlyAdmin.uid, action: "set-companies", companies: ["dillon"] } });
     expect(r.status).toBe(403);
+  });
+});
+
+
+describe("PIN by e-mail on approval", () => {
+  it("approval generates a PIN, e-mails it with the branded login link, and the PIN works", async () => {
+    await seedCompany("d1", "dillon", { groupId: "g1" });
+    const boss = await googleUser("boss@x.is");
+    await seedStaff("d1", boss.uid, { role: "owner", authType: "google" });
+    const s = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "nonni", email: "Nonni@X.is", name: "Nonni" } });
+    expect(s.body).toMatchObject({ status: "pending", pinEmailed: false });
+    expect((await call(login.POST, { slug: "dillon", method: "POST", body: { username: "nonni", password: "4826" } })).status).toBe(401);
+    const uid = (await adminDb.doc("tv_groups/g1/usernames/nonni").get()).data()!.uid;
+    const ap = await call(portal.PATCH, { slug: "dillon", method: "PATCH", token: boss.token, body: { uid, action: "approve" } });
+    expect(ap.body).toMatchObject({ pinEmailed: true, pinEmail: "nonni@x.is" });
+    expect(ap.body.pin).toBeUndefined(); // never shown when the e-mail went out
+    const { pin, mail } = await mailedPin("nonni@x.is");
+    expect(mail.text).toContain("Notendanafn: nonni");
+    expect(mail.text).toContain("https://staff.dillon.is/");
+    expect((await adminDb.doc(`tv_groups/g1/pinAccounts/${uid}`).get()).data()!.passwordHash).not.toContain(pin);
+    expect((await call(login.POST, { slug: "dillon", method: "POST", body: { username: "nonni", password: pin } })).status).toBe(200);
+  });
+
+  it("if the e-mail fails the admin gets the PIN once; 'send new PIN' replaces it", async () => {
+    await seedCompany("d1", "dillon", { groupId: "g1" });
+    const boss = await googleUser("boss@x.is");
+    await seedStaff("d1", boss.uid, { role: "owner", authType: "google" });
+    await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "gunna", email: "gunna@x.is", name: "Gunna" } });
+    const uid = (await adminDb.doc("tv_groups/g1/usernames/gunna").get()).data()!.uid;
+    process.env.MAIL_TEST_FAIL = "1";
+    try {
+      const ap = await call(portal.PATCH, { slug: "dillon", method: "PATCH", token: boss.token, body: { uid, action: "approve" } });
+      expect(ap.body.pinEmailed).toBe(false);
+      expect(ap.body.pin).toMatch(/^\d{4}$/);
+      const first = ap.body.pin as string;
+      const l = await call(login.POST, { slug: "dillon", method: "POST", body: { username: "gunna", password: first } });
+      const token = await exchangeCustomToken(l.body.token as string);
+      delete process.env.MAIL_TEST_FAIL;
+      const sp = await call(portal.PATCH, { slug: "dillon", method: "PATCH", token: boss.token, body: { uid, action: "send-pin" } });
+      expect(sp.body.pinEmailed).toBe(true);
+      const { pin } = await mailedPin("gunna@x.is");
+      if (pin !== first) expect((await call(login.POST, { slug: "dillon", method: "POST", body: { username: "gunna", password: first } })).status).toBe(401);
+      expect((await call(login.POST, { slug: "dillon", method: "POST", body: { username: "gunna", password: pin } })).status).toBe(200);
+      expect((await call(schedule.GET, { slug: "dillon", path: "schedule", token })).status).toBe(401); // old session revoked
+    } finally {
+      delete process.env.MAIL_TEST_FAIL;
+    }
+  });
+
+  it("an admin can create an account without choosing a PIN; it is e-mailed", async () => {
+    await seedCompany("d1", "dillon", { groupId: "g1" });
+    const boss = await googleUser("boss@x.is");
+    await seedStaff("d1", boss.uid, { role: "owner", authType: "google" });
+    expect((await call(portal.PUT, { slug: "dillon", method: "PUT", token: boss.token, body: { username: "solla", name: "Solla" } })).body.error).toBe("email_required_for_generated_pin");
+    const r = await call(portal.PUT, { slug: "dillon", method: "PUT", token: boss.token, body: { username: "solla", name: "Solla", email: "solla@x.is" } });
+    expect(r.body.pinEmailed).toBe(true);
+    const { pin } = await mailedPin("solla@x.is");
+    expect((await call(login.POST, { slug: "dillon", method: "POST", body: { username: "solla", password: pin } })).status).toBe(200);
+    expect((await call(portal.PUT, { slug: "dillon", method: "PUT", token: boss.token, body: { username: "simple", password: "1234" } })).body.error).toBe("pin_too_simple");
   });
 });
