@@ -60,4 +60,4 @@ Starfsfólk skráir inn/út-tíma á pappír eða í skilaboðum til vaktstjóra
 - Túlkanir merktar „túlkun“ í `docs/RATE_SOURCES.md`: hæsta álag gildir, yfirvinna aldrei undir álagi, vika hefst á mánudegi, námundun stjórnunarálags.
 - Firebase: auth-providers, authorized domains, heimildir þjónustureiknings, TTL-stefnur virkar, kostnaðarmörk og tilkynningar um villur.
 - Persónuvernd: fræðsla til starfsfólks, vinnslusamningur og geymslutími. Afritsskrá migration inniheldur persónuupplýsingar.
-- Eftirstandandi `npm audit`: 8 miðlungs-athugasemdir (`uuid` í gegnum `firebase-admin`). Lagfæring krefst stórútgáfu firebase-admin; metið við næstu uppfærslu.
+- Eftirstandandi `npm audit`: 8 miðlungs-athugasemdir (`uuid` í gegnum `firebase-admin`). `@grpc/grpc-js` er fest í ^1.14.5 með `overrides` því `@firebase/firestore` læsir 1.9.x. Lagfæring krefst stórútgáfu firebase-admin; metið við næstu uppfærslu.
