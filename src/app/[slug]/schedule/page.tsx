@@ -98,7 +98,14 @@ function Time24Select({ value, onChange, endTime }: { value: string; onChange: (
 interface Shift {
   id: string; uid: string; name: string; date: string;
   startTime: string; endTime: string; notes: string;
-  wageEstimate: number; totalHours: number; source: "single" | "template"; templateId?: string;
+  source: "single" | "template"; templateId?: string;
+  /** Present only for manager+ (all shifts) or on the caller's own shifts. */
+  estimate?: { hours: number; grossCents: number | null; status: string; draftRates: boolean; issues: string[] };
+}
+function shiftHours(sh: Shift) {
+  const [sh1, sm1] = sh.startTime.split(":").map(Number); const [eh, em] = sh.endTime.split(":").map(Number);
+  let mins = eh * 60 + em - (sh1 * 60 + sm1); if (mins <= 0) mins += 24 * 60;
+  return mins / 60;
 }
 interface Template { id: string; uid: string; name: string; daysOfWeek: number[]; startTime: string; endTime: string; label: string; }
 interface StaffMember { uid: string; name: string; status: string; }
@@ -151,7 +158,9 @@ export default function SchedulePage() {
       if (cancelled || !r.ok) return;
       const d = await r.json();
       if (d.role) setMyRole(d.role);
-      const approved: StaffMember[] = (d.staffList || []).filter((s: StaffMember) => s.status === "approved");
+      // Admins get staffList; managers get team (+ themselves).
+      const list: StaffMember[] = d.staffList || [...(d.team || []), { uid: user.uid, name: d.name || "", status: "approved" }];
+      const approved = list.filter((s: StaffMember) => s.status === "approved");
       setStaffList(approved);
       setMUid(prev => prev || approved[0]?.uid || "");
     });
@@ -187,13 +196,15 @@ export default function SchedulePage() {
       const tok = await user.getIdToken();
       const day = weekDays[modal.dayIndex];
       const dow = day.getUTCDay();
+      let res: Response;
       if (mType === "recurring") {
-        await fetch(`/api/${slug}/shift-templates`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ uid: mUid, daysOfWeek: [dow], startTime: mFrom, endTime: normalizeTime(mTo), label: mNote }) });
+        res = await fetch(`/api/${slug}/shift-templates`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ uid: mUid, daysOfWeek: [dow], startTime: mFrom, endTime: normalizeTime(mTo), label: mNote }) });
       } else {
-        await fetch(`/api/${slug}/schedule`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ uid: mUid, date: modal.date, startTime: mFrom, endTime: normalizeTime(mTo), notes: mNote }) });
+        res = await fetch(`/api/${slug}/schedule`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ uid: mUid, date: modal.date, startTime: mFrom, endTime: normalizeTime(mTo), notes: mNote }) });
       }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(`${lang === "is" ? "Vistun mistókst" : "Save failed"}: ${d.error || res.status}`); return; }
       closeModal(); reload();
-    } finally { setSaving(false); }
+    } catch { alert(lang === "is" ? "Netvilla — ekki vistað" : "Network error — not saved"); } finally { setSaving(false); }
   };
 
   const deleteShift = async (sh: Shift) => {
@@ -201,13 +212,15 @@ export default function SchedulePage() {
     setDeletingId(sh.id);
     try {
       const tok = await user.getIdToken();
+      let res: Response;
       if (sh.source === "template" && sh.templateId) {
-        await fetch(`/api/${slug}/shift-templates`, { method: "DELETE", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ templateId: sh.templateId }) });
+        res = await fetch(`/api/${slug}/shift-templates`, { method: "DELETE", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ templateId: sh.templateId }) });
       } else {
-        await fetch(`/api/${slug}/schedule`, { method: "DELETE", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ shiftId: sh.id }) });
+        res = await fetch(`/api/${slug}/schedule`, { method: "DELETE", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ shiftId: sh.id }) });
       }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(`${lang === "is" ? "Eyðing mistókst" : "Delete failed"}: ${d.error || res.status}`); return; }
       reload();
-    } finally { setDeletingId(null); }
+    } catch { alert(lang === "is" ? "Netvilla" : "Network error"); } finally { setDeletingId(null); }
   };
 
   // Colour-code by person. Build from everyone seen in the data so staff (who
@@ -215,8 +228,10 @@ export default function SchedulePage() {
   const allUids = Array.from(new Set([...staffList.map(s => s.uid), ...shifts.map(s => s.uid), ...templates.map(tm => tm.uid)]));
   const colorIndex = new Map(allUids.map((uid, i) => [uid, i % STAFF_COLORS.length]));
   const col = (uid: string) => STAFF_COLORS[colorIndex.get(uid) ?? 0];
-  const totalEst = shifts.reduce((s, x) => s + (x.wageEstimate || 0), 0);
-  const totalHrs = shifts.reduce((s, x) => s + (x.totalHours || 0), 0);
+  const totalEst = shifts.reduce((s, x) => s + (x.estimate?.grossCents ?? 0), 0) / 100;
+  const estIncomplete = shifts.some(x => x.estimate && x.estimate.grossCents === null);
+  const estDraft = shifts.some(x => x.estimate?.draftRates);
+  const totalHrs = shifts.reduce((s, x) => s + shiftHours(x), 0);
   // Group shifts by date
   const byDate = new Map<string, Shift[]>();
   for (const sh of shifts) { if (!byDate.has(sh.date)) byDate.set(sh.date, []); byDate.get(sh.date)!.push(sh); }
@@ -246,7 +261,7 @@ export default function SchedulePage() {
             )}
             {shifts.length > 0 && (
               <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", padding: "5px 11px", background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 7 }}>
-                {totalHrs.toFixed(1)}h{isManager && totalEst > 0 ? ` · ${fmtKr(totalEst)}` : ""}
+                {totalHrs.toFixed(1)}h{isManager && totalEst > 0 ? ` · ${t.totalCost}: ${fmtKr(Math.round(totalEst))}${estIncomplete ? (lang === "is" ? " (vantar kjör hjá sumum)" : " (terms missing for some)") : ""}${estDraft ? (lang === "is" ? " · drög að taxta" : " · draft rates") : ""}` : ""}
               </span>
             )}
           </div>

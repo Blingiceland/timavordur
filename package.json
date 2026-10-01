@@ -7,12 +7,17 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:integration": "firebase emulators:exec --only firestore,auth --project demo-timavordur \"vitest run --config vitest.integration.config.ts\"",
+    "check:rates": "node scripts/check-rate-sources.mjs",
+    "audit:deps": "npm audit --omit=dev --audit-level=high",
+    "migrate:2026-10": "node scripts/migrate-2026-10.mjs"
   },
   "dependencies": {
-    "firebase": "^12.11.0",
+    "firebase": "^12.19.0",
     "firebase-admin": "^13.7.0",
-    "next": "16.2.1",
+    "next": "16.3.7",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
@@ -21,8 +26,14 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.1",
+    "eslint-config-next": "16.3.7",
     "typescript": "^5",
     "vitest": "^4.1.9"
+  },
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "^1.14.5"
   }
 }

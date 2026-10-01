@@ -36,13 +36,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
       uid: MOCK_UID, name: MOCK_NAME, email: MOCK_EMAIL,
       role: "staff", status: "approved",
       jobTitle: "Barþjónn", employmentType: "full-time",
-      payType: "hourly", hourlyRate: 2000,
-      collectiveAgreement: "efling_sa",
       ssn: "010190-1234", phone: "8001234",
       bankName: "Íslandsbanki", bankAccount: "0111-26-111111",
       union: "Efling", pension: "Gildi",
       addedAt: FieldValue.serverTimestamp(), registeredSelf: false, language: "is",
     }, { merge: true });
+
+    // Dated employment terms for the mock employee (dev only).
+    await adminDb.collection("tv_companies").doc(companyId).collection("employmentTerms").doc("mock-anna-terms").set({
+      uid: MOCK_UID, effectiveFrom: "2026-01-01", recordedAt: FieldValue.serverTimestamp(), recordedBy: decoded.uid,
+      reason: "dev-seed", status: "active", agreementId: "efling_sa_hotel", workingArrangement: "shift", payType: "hourly",
+      employmentPercentage: 100, wageClass: 6, managementRole: false, birthDate: "1990-01-01", employerStartDate: "2025-01-01",
+      priorIndustryMonths: null, experienceVerifiedOn: null, stepOverride: null, personalDayRate: null, monthlySalary: null,
+      fixedAdditions: [], orlofOverrideBp: null, legacy: null,
+    });
 
     // Generate mock punch records for current period (March 25 - April 5)
     // Various shift types: dagvinna, kvöldvinna, helgarvinna, stórhátíð
@@ -101,6 +108,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+  if (process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   const { slug } = await params;
   const auth = req.headers.get("Authorization");
   if (!auth?.startsWith("Bearer ")) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -114,6 +124,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ s
 
     // Delete mock staff
     await adminDb.collection("tv_companies").doc(companyId).collection("staff").doc("mock-anna-001").delete();
+    await adminDb.collection("tv_companies").doc(companyId).collection("employmentTerms").doc("mock-anna-terms").delete();
     // Delete mock punch records
     const rSnap = await adminDb.collection("tv_companies").doc(companyId).collection("punchRecords").where("uid", "==", "mock-anna-001").get();
     const b2 = adminDb.batch();

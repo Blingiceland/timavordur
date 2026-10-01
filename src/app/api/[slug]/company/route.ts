@@ -1,31 +1,20 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
-import { reportApiError } from "@/lib/report-error";
+import { NextRequest } from "next/server";
+import { getCompanyBySlug } from "@/lib/auth";
+import { groupCompanies } from "@/lib/server/group";
+import { fail, handle, json } from "@/lib/server/http";
 
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ slug: string }> }
-) {
+// GET /api/[slug]/company — public: name, registration fields and the workplaces
+// in the same group (for the "where do you work?" choice at sign-up).
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  try {
-    const snap = await adminDb
-      .collection("tv_companies")
-      .where("slug", "==", slug)
-      .where("active", "==", true)
-      .limit(1)
-      .get();
-
-    if (snap.empty) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const data = snap.docs[0].data();
-    return NextResponse.json({
-      id: snap.docs[0].id,
-      name: data.name,
-      slug: data.slug,
-      registrationFields: data.registrationFields || {},
-      requireApproval: data.requireApproval !== false,
+  return handle("company GET", { slug }, async () => {
+    const company = await getCompanyBySlug(slug);
+    if (!company) return fail("not_found", 404);
+    const group = await groupCompanies(company.groupId);
+    return json({
+      id: company.id, name: company.name, slug: company.slug,
+      registrationFields: company.registrationFields, requireApproval: company.requireApproval,
+      groupCompanies: group.map((c) => ({ slug: c.slug, name: c.name })),
     });
-  } catch (err) {
-    await reportApiError("company GET", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+  });
 }

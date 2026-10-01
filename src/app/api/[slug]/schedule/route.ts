@@ -1,206 +1,79 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth } from "@/lib/firebase-admin";
+import { NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
-import { calculateWage } from "@/lib/wage-calculator";
-import { isDate, isTime } from "@/lib/validation";
-import { reportApiError } from "@/lib/report-error";
+import { atLeast, isAccessError, staffRef, verifyCompanyRole } from "@/lib/auth";
+import { requestIdOf, writeAudit } from "@/lib/audit";
+import { accessFail, fail, handle, json } from "@/lib/server/http";
+import { shiftsCol } from "@/lib/server/refs";
+import { estimateShift, loadSchedule } from "@/lib/server/schedule-service";
+import { loadTermsByUid } from "@/lib/server/terms-store";
+import { cleanStr, isDate, isDateRange, isDocId, isTime, readJsonObject } from "@/lib/validation";
 
-async function verifyToken(req: NextRequest) {
-  const auth = req.headers.get("Authorization");
-  if (!auth?.startsWith("Bearer ")) return null;
-  try { return await adminAuth.verifyIdToken(auth.split(" ")[1]); } catch { return null; }
-}
-
-async function getCompany(slug: string) {
-  const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
-  if (snap.empty) return null;
-  return { id: snap.docs[0].id, ...snap.docs[0].data() } as { id: string; name: string; slug: string; businessType?: "bar" | "restaurant"; wageCategories?: { id: string; dayRate: number }[] };
-}
+type Ctx = { params: Promise<{ slug: string }> };
+const MAX_RANGE_DAYS = 62;
 
 // GET /api/[slug]/schedule?from=YYYY-MM-DD&to=YYYY-MM-DD
-export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+// Every approved member sees the plan (names/times). Pay estimates are only
+// returned to manager+ — or, for a regular employee, on their OWN shifts.
+export async function GET(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    if (!meDoc.exists) return NextResponse.json({ error: "not_registered" }, { status: 403 });
-    const myRole = (meDoc.data()!.role as string) || "staff";
-
+  return handle("schedule GET", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "staff");
+    if (isAccessError(access)) return accessFail(access);
+    const { company, decoded, role } = access;
     const url = new URL(req.url);
     const from = url.searchParams.get("from") || new Date().toISOString().slice(0, 10);
     const to = url.searchParams.get("to") || from;
+    if (!isDateRange(from, to, MAX_RANGE_DAYS)) return fail("invalid_range", 400);
 
-    // 1. Fetch single/override shifts for the date range.
-    // All approved staff may view the full schedule (read-only); only manager+
-    // can create/edit/delete (enforced on POST/PATCH/DELETE).
-    const singleSnap = await adminDb.collection("tv_companies").doc(company.id).collection("shifts")
-      .where("date", ">=", from).where("date", "<=", to).orderBy("date", "asc").get();
-    const singleShifts = singleSnap.docs.map(d => ({ id: d.id, source: "single" as const, ...d.data() }));
-
-    // 2. Fetch active templates
-    const tmplSnap = await adminDb.collection("tv_companies").doc(company.id)
-      .collection("shiftTemplates").where("active", "==", true).get();
-    const templates = tmplSnap.docs.map(d => ({ id: d.id, ...d.data() })) as {
-      id: string; uid: string; name: string; daysOfWeek: number[];
-      startTime: string; endTime: string; label: string;
-      hourlyRate: number; wageEstimate: number; totalHours: number;
-      activeFrom?: string; activeTo?: string;
-    }[];
-
-    // 3. Build set of "overridden" slots (uid+date) from singleShifts
-    const overriddenKeys = new Set(singleShifts.map(s => {
-      const sd = s as Record<string, unknown>;
-      return `${sd.uid}_${sd.date}`;
-    }));
-    const cancelledKeys = new Set(singleShifts
-      .filter(s => (s as Record<string, unknown>).status === "cancelled")
-      .map(s => { const sd = s as Record<string, unknown>; return `${sd.uid}_${sd.date}`; }));
-
-    // 4. Expand templates across date range
-    const templateShifts: Record<string, unknown>[] = [];
-    const cur = new Date(from + "T00:00:00Z");
-    const end = new Date(to + "T00:00:00Z");
-    while (cur <= end) {
-      const ymd = cur.toISOString().slice(0, 10);
-      const dow = cur.getUTCDay();
-      for (const tmpl of templates) {
-        if (!tmpl.daysOfWeek.includes(dow)) continue;
-        if (tmpl.activeFrom && ymd < tmpl.activeFrom) continue;
-        if (tmpl.activeTo && ymd > tmpl.activeTo) continue;
-        const key = `${tmpl.uid}_${ymd}`;
-        if (cancelledKeys.has(key)) continue; // explicitly cancelled
-        if (overriddenKeys.has(key)) continue; // single shift takes precedence
-        templateShifts.push({
-          id: `tmpl_${tmpl.id}_${ymd}`,
-          templateId: tmpl.id,
-          source: "template",
-          uid: tmpl.uid, name: tmpl.name,
-          date: ymd, startTime: tmpl.startTime, endTime: tmpl.endTime,
-          notes: tmpl.label || "",
-          status: "scheduled",
-          wageEstimate: tmpl.wageEstimate || 0,
-          totalHours: tmpl.totalHours || 0,
-          hourlyRate: tmpl.hourlyRate || 0,
-        });
-      }
-      cur.setUTCDate(cur.getUTCDate() + 1);
-    }
-
-    // 5. Merge: single shifts + template expansions, sort by date+name
-    const allShifts = [
-      ...singleShifts.filter(s => (s as Record<string, unknown>).status !== "cancelled"),
-      ...templateShifts,
-    ].sort((a, b) => {
-      const ad = a as Record<string, unknown>; const bd = b as Record<string, unknown>;
-      return String(ad.date) < String(bd.date) ? -1 : String(ad.date) > String(bd.date) ? 1 : 0;
+    const shifts = await loadSchedule(company.id, from, to);
+    const isManager = atLeast(role, "manager");
+    const terms = await loadTermsByUid(company.id, isManager ? undefined : [decoded.uid]);
+    const out = shifts.map((s) => {
+      const base = { id: s.id, source: s.source, templateId: s.templateId, uid: s.uid, name: s.name, date: s.date, startTime: s.startTime, endTime: s.endTime, notes: s.notes, status: s.status };
+      if (!isManager && s.uid !== decoded.uid) return base;
+      return { ...base, estimate: estimateShift(s, terms.get(s.uid) ?? [], company.businessType ?? "bar") };
     });
-
-    return NextResponse.json({ shifts: allShifts, myRole });
-  } catch (err) {
-    await reportApiError("schedule GET", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+    return json({ shifts: out, myRole: role });
+  });
 }
 
-
-// POST /api/[slug]/schedule — create shift (manager+)
-export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+// POST — create a single shift (manager+)
+export async function POST(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return handle("schedule POST", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "manager");
+    if (isAccessError(access)) return accessFail(access);
+    const body = await readJsonObject(req);
+    if (!body) return fail("invalid_body", 400);
+    const { uid, date, startTime, endTime } = body;
+    if (!isDocId(uid) || !isDate(date) || !isTime(startTime) || !isTime(endTime)) return fail("invalid_shift", 400);
+    if (startTime === endTime) return fail("zero_length_shift", 400);
+    const target = await staffRef(access.company.id, uid).get();
+    if (!target.exists || target.data()!.status !== "approved") return fail("staff_not_found", 404);
 
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    if (!meDoc.exists || !["manager", "admin", "owner"].includes(meDoc.data()?.role)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    const body = await req.json();
-    const { uid, date, startTime, endTime, notes } = body;
-    if (!uid || !date || !startTime || !endTime) {
-      return NextResponse.json({ error: "uid, date, startTime, endTime required" }, { status: 400 });
-    }
-    if (!isDate(date) || !isTime(startTime) || !isTime(endTime)) {
-      return NextResponse.json({ error: "Ógild dagsetning (YYYY-MM-DD) eða tími (HH:MM)" }, { status: 400 });
-    }
-
-    // Fetch staff for name + wage rate
-    const staffDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(uid).get();
-    const staff = staffDoc.data() || {};
-    const cat = (company.wageCategories || []).find(c => c.id === staff.wageCategoryId);
-    const hourlyRate = cat ? cat.dayRate : ((staff.hourlyRate as number) || 0);
-    const agreement = (staff.collectiveAgreement as "efling_sa" | "custom") || "efling_sa";
-
-    // Calculate wage estimate
-    const startISO = `${date}T${startTime}:00Z`;
-    const endISO = endTime <= startTime
-      ? `${addOneDay(date)}T${endTime}:00Z`   // crosses midnight
-      : `${date}T${endTime}:00Z`;
-    const punchIn = new Date(startISO);
-    const punchOut = new Date(endISO);
-    const wage = calculateWage(punchIn, punchOut, hourlyRate, agreement, company.businessType || "bar");
-
-    const ref = await adminDb.collection("tv_companies").doc(company.id).collection("shifts").add({
-      uid,
-      name: staff.name || "",
-      date,
-      startTime,
-      endTime,
-      crossesMidnight: endTime <= startTime,
-      notes: notes || "",
-      status: "scheduled",
-      wageEstimate: Math.round(wage.totalWage),
-      totalHours: Math.round(wage.totalHours * 100) / 100,
-      effectiveMultiplier: wage.effectiveMultiplier,
-      hourlyRate,
-      agreement,
-      createdBy: decoded.uid,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-
-    return NextResponse.json({ id: ref.id });
-  } catch (err) {
-    await reportApiError("schedule POST", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+    const doc = {
+      uid, name: target.data()!.name || "", date, startTime, endTime, crossesMidnight: endTime <= startTime,
+      notes: cleanStr(body.notes, 200), status: "scheduled", createdBy: access.decoded.uid, createdAt: FieldValue.serverTimestamp(),
+    };
+    const ref = await shiftsCol(access.company.id).add(doc);
+    await writeAudit({ companyId: access.company.id, actorUid: access.decoded.uid, actorRole: access.role, action: "schedule.create", targetType: "shift", targetId: ref.id, after: doc, requestId: requestIdOf(req) });
+    return json({ id: ref.id });
+  });
 }
 
-// DELETE /api/[slug]/schedule — delete shift (manager+)
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+// DELETE — delete a single shift (manager+)
+export async function DELETE(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    if (!meDoc.exists || !["manager", "admin", "owner"].includes(meDoc.data()?.role)) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    const { shiftId } = await req.json();
-    if (!shiftId) return NextResponse.json({ error: "shiftId required" }, { status: 400 });
-
-    await adminDb.collection("tv_companies").doc(company.id).collection("shifts").doc(shiftId).delete();
-    return NextResponse.json({ ok: true });
-  } catch (err) {
-    await reportApiError("schedule DELETE", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
-}
-
-function addOneDay(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + 1);
-  return d.toISOString().slice(0, 10);
+  return handle("schedule DELETE", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "manager");
+    if (isAccessError(access)) return accessFail(access);
+    const body = await readJsonObject(req);
+    if (!body || !isDocId(body.shiftId)) return fail("shiftId_required", 400);
+    const ref = shiftsCol(access.company.id).doc(body.shiftId);
+    const snap = await ref.get();
+    if (!snap.exists) return fail("not_found", 404);
+    await ref.delete();
+    await writeAudit({ companyId: access.company.id, actorUid: access.decoded.uid, actorRole: access.role, action: "schedule.delete", targetType: "shift", targetId: ref.id, before: snap.data(), requestId: requestIdOf(req) });
+    return json({ ok: true });
+  });
 }

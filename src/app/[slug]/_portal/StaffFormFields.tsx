@@ -1,10 +1,14 @@
 "use client";
-import type { Role, Lang, TeamMember, WageCategory } from "./types";
+import type { Role, Lang, TeamMember } from "./types";
 import { ROLES } from "./constants";
 
-// Shared staff detail/pay form used by both the "edit staff" and "add staff" modals.
-export function StaffFormFields({ form, onChange, lang, isOwner, categories = [] }: { form: Partial<TeamMember>; onChange: (v: Partial<TeamMember>) => void; lang: Lang; isOwner: boolean; categories?: WageCategory[] }) {
-  const selectedCat = categories.find(c => c.id === form.wageCategoryId);
+// Shared staff PROFILE form for the edit/add modals. Pay terms are deliberately
+// not here: they are recorded with an effective date on the terms page, so the
+// history is kept and roles never mix with pay.
+export function StaffFormFields({ form, onChange, lang, isOwner, pinAccount = false, slug, uid }: {
+  form: Partial<TeamMember>; onChange: (v: Partial<TeamMember>) => void; lang: Lang; isOwner: boolean;
+  pinAccount?: boolean; slug?: string; uid?: string;
+}) {
   const fields: [keyof TeamMember, string, string, string][] = [
     ["name", "Fullt nafn", "Full name", "Jón Jónsson"],
     ["ssn", "Kennitala", "ID number", "1234567890"],
@@ -12,85 +16,42 @@ export function StaffFormFields({ form, onChange, lang, isOwner, categories = []
     ["address", "Heimilisfang", "Address", "Laugavegur 1"],
     ["bankName", "Banki", "Bank", "Íslandsbanki"],
     ["bankAccount", "Reikningsnúmer", "Account no.", "0111-26-123456"],
-    ["union", "Stéttarfélag", "Union", "VR"],
+    ["union", "Stéttarfélag", "Union", "Efling"],
     ["pension", "Lífeyrissjóður", "Pension", "Gildi"],
     ["jobTitle", "Starfsheiti", "Job title", "Barþjónn"],
   ];
-  const payType = (form as Record<string, unknown>).payType as string || "hourly";
+  // PIN (4-digit) accounts can never be admin/owner.
+  const roleOptions = ROLES.filter(r => !pinAccount || r.key === "staff" || r.key === "manager");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
       {fields.map(([key, is, en, ph]) => (
         <div key={key} className="form-group">
-          <label className="form-label">{lang === "is" ? is : en}</label>
-          <input className="form-input" placeholder={ph} value={String(form[key] || "")} onChange={e => onChange({ ...form, [key]: e.target.value })} />
+          <label className="form-label" htmlFor={`sf-${key}`}>{lang === "is" ? is : en}</label>
+          <input id={`sf-${key}`} className="form-input" placeholder={ph} value={String(form[key] || "")} onChange={e => onChange({ ...form, [key]: e.target.value })} />
         </div>
       ))}
       {isOwner && (
         <div className="form-group">
-          <label className="form-label">{lang === "is" ? "Hlutverk" : "Role"}</label>
-          <select className="form-input" value={form.role || "staff"} onChange={e => onChange({ ...form, role: e.target.value as Role })}>
-            {ROLES.map(r => <option key={r.key} value={r.key}>{lang === "is" ? r.labelIs : r.labelEn}</option>)}
+          <label className="form-label" htmlFor="sf-role">{lang === "is" ? "Aðgangshlutverk í kerfinu" : "Application role"}</label>
+          <select id="sf-role" className="form-input" value={form.role || "staff"} onChange={e => onChange({ ...form, role: e.target.value as Role })}>
+            {roleOptions.map(r => <option key={r.key} value={r.key}>{lang === "is" ? r.labelIs : r.labelEn}</option>)}
           </select>
+          <div className="text-muted" style={{ fontSize: "0.78rem", marginTop: 3 }}>
+            {lang === "is" ? "Hlutverk ræður aðgangi, ekki launum. Stjórnunarálag (gr. 1.2.4) er skráð í ráðningarkjörum." : "Role controls access, not pay. The management premium (1.2.4) is recorded in employment terms."}
+          </div>
         </div>
       )}
       <div className="form-group">
-        <label className="form-label">{lang === "is" ? "Ráðningarstig" : "Employment type"}</label>
-        <select className="form-input" value={form.employmentType || ""} onChange={e => onChange({ ...form, employmentType: e.target.value })}>
+        <label className="form-label" htmlFor="sf-et">{lang === "is" ? "Ráðningarstig (upplýsingar)" : "Employment type (info)"}</label>
+        <select id="sf-et" className="form-input" value={form.employmentType || ""} onChange={e => onChange({ ...form, employmentType: e.target.value })}>
           <option value="">{lang === "is" ? "Veldu..." : "Choose..."}</option>
           <option value="full-time">{lang === "is" ? "Fullt starf" : "Full-time"}</option>
           <option value="part-time">{lang === "is" ? "Hlutastarf" : "Part-time"}</option>
         </select>
       </div>
-
-      {/* ── Pay settings ── */}
-      <div style={{ borderTop: "1px solid var(--border)", paddingTop: "12px", marginTop: "4px" }}>
-        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "10px" }}>
-          {lang === "is" ? "💰 Launastillingar" : "💰 Pay settings"}
-        </div>
-        {categories.length > 0 && (
-          <div className="form-group" style={{ marginBottom: "10px" }}>
-            <label className="form-label">{lang === "is" ? "Launaflokkur" : "Wage category"}</label>
-            <select className="form-input" value={form.wageCategoryId || ""} onChange={e => onChange({ ...form, wageCategoryId: e.target.value })}>
-              <option value="">{lang === "is" ? "— Eigin taxti —" : "— Custom rate —"}</option>
-              {categories.map(c => <option key={c.id} value={c.id}>{c.name} ({c.dayRate.toLocaleString("is-IS")} kr)</option>)}
-            </select>
-            {selectedCat && <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: 3 }}>{selectedCat.description} · {lang === "is" ? "Dagvinnutaxti" : "Day rate"}: {selectedCat.dayRate.toLocaleString("is-IS")} kr/klst</div>}
-          </div>
-        )}
-        <div className="form-group" style={{ marginBottom: "10px" }}>
-          <label className="form-label">{lang === "is" ? "Launamáti" : "Pay type"}</label>
-          <select className="form-input" value={payType} onChange={e => onChange({ ...form, ...{ payType: e.target.value } } as Partial<TeamMember>)}>
-            <option value="hourly">{lang === "is" ? "Tímakaup" : "Hourly"}</option>
-            <option value="monthly">{lang === "is" ? "Föst mánaðarlaun" : "Fixed monthly"}</option>
-            <option value="averaged">{lang === "is" ? "Jafnaðarkaup" : "Averaged pay"}</option>
-          </select>
-        </div>
-        {!selectedCat && (payType === "hourly" || payType === "averaged") && (
-          <div className="form-group" style={{ marginBottom: "10px" }}>
-            <label className="form-label">{lang === "is" ? "Grunnkaup (kr/klst)" : "Base rate (ISK/hr)"}</label>
-            <input type="number" className="form-input" placeholder="1800" min={0}
-              value={String((form as Record<string, unknown>).hourlyRate || "")}
-              onChange={e => onChange({ ...form, ...{ hourlyRate: parseInt(e.target.value) || 0 } } as Partial<TeamMember>)} />
-            <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "3px" }}>
-              {lang === "is" ? "Lágmarkskaup Efling/SA 2025: ~1.782 kr/klst" : "Efling/SA minimum 2025: ~ISK 1,782/hr"}
-            </div>
-          </div>
-        )}
-        {(payType === "monthly" || payType === "averaged") && (
-          <div className="form-group" style={{ marginBottom: "10px" }}>
-            <label className="form-label">{lang === "is" ? payType === "monthly" ? "Mánaðarlaun (kr)" : "Jafnaðarkaup (kr/mán)" : payType === "monthly" ? "Monthly salary (ISK)" : "Averaged monthly (ISK)"}</label>
-            <input type="number" className="form-input" placeholder="450000" min={0}
-              value={String((form as Record<string, unknown>).monthlyRate || "")}
-              onChange={e => onChange({ ...form, ...{ monthlyRate: parseInt(e.target.value) || 0 } } as Partial<TeamMember>)} />
-          </div>
-        )}
-        <div className="form-group">
-          <label className="form-label">{lang === "is" ? "Kjarasamningur" : "Collective agreement"}</label>
-          <select className="form-input" value={String((form as Record<string, unknown>).collectiveAgreement || "efling_sa")} onChange={e => onChange({ ...form, ...{ collectiveAgreement: e.target.value } } as Partial<TeamMember>)}>
-            <option value="efling_sa">Efling / SA — {lang === "is" ? "Veitingastaðir" : "Restaurants"}</option>
-            <option value="custom">{lang === "is" ? "Sérstakur samningur" : "Custom agreement"}</option>
-          </select>
-        </div>
+      <div style={{ borderTop: "1px solid var(--border)", paddingTop: 12, fontSize: "0.85rem" }} className="text-secondary">
+        💰 {lang === "is" ? "Launakjör (launaflokkur, þrep, vinnufyrirkomulag, starfshlutfall, persónuleg kjör) eru skráð með gildisdegi." : "Pay terms (class, step, arrangement, percentage, personal pay) are recorded with an effective date."}{" "}
+        {slug && uid && <a href={`/${slug}/rates?uid=${uid}`}>{lang === "is" ? "Opna kjör →" : "Open terms →"}</a>}
       </div>
     </div>
   );

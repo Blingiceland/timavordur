@@ -1,10 +1,28 @@
-// Icelandic public holidays calculator — Efling/SA wage rules
-// Three types:
-//   "storhatid"      — ×1.90 all day
-//   "helgarfridagur" — ×1.45 all day (like weekend)
-//   "half-storhatid" — regular rate until storhatidFromHour, then ×1.90
+// Icelandic holidays as defined by the SA/Efling hotel & restaurant agreement
+// (þjónustusamningur SA og Eflingar 2024–2028):
+//
+//   gr. 2.3.1 / 3.2.3 — stórhátíðardagar (90% álag í vaktavinnu):
+//     nýársdagur, föstudagurinn langi, páskadagur, hvítasunnudagur, 17. júní,
+//     jóladagur, og aðfangadagur og gamlársdagur EFTIR KL. 12:00.
+//   gr. 2.3.2 / 3.2.2 — aðrir frídagar / helgidagar (45% álag í vaktavinnu):
+//     skírdagur, annar í páskum, sumardagurinn fyrsti, 1. maí, uppstigningardagur,
+//     annar í hvítasunnu, fyrsti mánudagur í ágúst, annar í jólum.
+//
+// All times are UTC; Iceland is UTC+0 year-round (no DST).
+
+export type HolidayType = "storhatid" | "storhatid_from_noon" | "helgidagur";
+
+export interface HolidayInfo {
+  date: string; // YYYY-MM-DD
+  nameIs: string;
+  nameEn: string;
+  type: HolidayType;
+  /** For storhatid_from_noon: the UTC hour from which the day counts as stórhátíð. */
+  fromHour?: number;
+}
 
 function getEasterDate(year: number): Date {
+  // Anonymous Gregorian algorithm (Meeus/Jones/Butcher).
   const a = year % 19;
   const b = Math.floor(year / 100);
   const c = year % 100;
@@ -28,69 +46,63 @@ function addDays(date: Date, days: number): Date {
   return d;
 }
 
-function toDateStr(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
+const ymd = (date: Date) => date.toISOString().slice(0, 10);
 
-function getFirstMondayOfAugust(year: number): Date {
+function firstMondayOfAugust(year: number): Date {
   const d = new Date(Date.UTC(year, 7, 1));
-  const dow = d.getUTCDay();
-  const daysUntilMonday = dow === 1 ? 0 : (8 - dow) % 7;
-  return new Date(Date.UTC(year, 7, 1 + daysUntilMonday));
+  const offset = (8 - d.getUTCDay()) % 7; // days until Monday (0 if already Monday)
+  return new Date(Date.UTC(year, 7, 1 + offset));
 }
 
-export type HolidayType = "storhatid" | "helgarfridagur" | "half-storhatid";
-
-export interface HolidayInfo {
-  date: string;           // YYYY-MM-DD
-  nameIs: string;
-  nameEn: string;
-  type: HolidayType;
-  storhatidFromHour?: number; // Only for "half-storhatid" — hour (UTC+0 base) when ×1.90 kicks in
+/** Sumardagurinn fyrsti: fyrsti fimmtudagur eftir 18. apríl (19.–25. apríl). */
+function firstDayOfSummer(year: number): Date {
+  const d = new Date(Date.UTC(year, 3, 19));
+  const offset = (4 - d.getUTCDay() + 7) % 7; // days until Thursday
+  return new Date(Date.UTC(year, 3, 19 + offset));
 }
 
 export function getIcelandicHolidays(year: number): HolidayInfo[] {
   const easter = getEasterDate(year);
   return [
-    // ── Half stórhátíðir (regular rate until storhatidFromHour, then ×1.90) ──
-    // Note: Aðfangadagur and Gamlársdagur are NOT public holidays — only special after 16:00
-    // We store hour 16 in UTC+0; callers should convert if needed (Iceland = UTC/UTC+0 in winter)
-    { date: `${year}-12-24`, nameIs: "Aðfangadagur", nameEn: "Christmas Eve", type: "half-storhatid", storhatidFromHour: 16 },
-    { date: `${year}-12-31`, nameIs: "Gamlársdagur", nameEn: "New Year's Eve", type: "half-storhatid", storhatidFromHour: 16 },
+    // ── Stórhátíðardagar (gr. 2.3.1 / 3.2.3) ────────────────────────────────
+    { date: `${year}-01-01`, nameIs: "Nýársdagur", nameEn: "New Year's Day", type: "storhatid" },
+    { date: ymd(addDays(easter, -2)), nameIs: "Föstudagurinn langi", nameEn: "Good Friday", type: "storhatid" },
+    { date: ymd(easter), nameIs: "Páskadagur", nameEn: "Easter Sunday", type: "storhatid" },
+    { date: ymd(addDays(easter, 49)), nameIs: "Hvítasunnudagur", nameEn: "Whit Sunday", type: "storhatid" },
+    { date: `${year}-06-17`, nameIs: "Þjóðhátíðardagurinn", nameEn: "National Day", type: "storhatid" },
+    { date: `${year}-12-24`, nameIs: "Aðfangadagur", nameEn: "Christmas Eve", type: "storhatid_from_noon", fromHour: 12 },
+    { date: `${year}-12-25`, nameIs: "Jóladagur", nameEn: "Christmas Day", type: "storhatid" },
+    { date: `${year}-12-31`, nameIs: "Gamlársdagur", nameEn: "New Year's Eve", type: "storhatid_from_noon", fromHour: 12 },
 
-    // ── Stórhátíðir (×1.90 allur dagurinn) ───────────────────────────────────
-    { date: toDateStr(addDays(easter, -2)), nameIs: "Föstudagurinn langi", nameEn: "Good Friday", type: "storhatid" },
-    { date: toDateStr(easter),             nameIs: "Páskadagur",           nameEn: "Easter Sunday", type: "storhatid" },
-    { date: toDateStr(addDays(easter, 49)),nameIs: "Hvítasunnudagur",      nameEn: "Whit Sunday", type: "storhatid" },
-    { date: `${year}-05-01`,               nameIs: "Verkalýðsdagurinn",    nameEn: "Labour Day", type: "storhatid" },
-    { date: `${year}-06-17`,               nameIs: "Þjóðhátíðardagurinn",  nameEn: "National Day", type: "storhatid" },
-    { date: `${year}-12-25`,               nameIs: "Jóladagur",            nameEn: "Christmas Day", type: "storhatid" },
-
-    // ── Helgarfrídagar (×1.45 — eins og helgar) ───────────────────────────────
-    { date: `${year}-01-01`,               nameIs: "Nýársdagur",           nameEn: "New Year's Day", type: "helgarfridagur" },
-    { date: toDateStr(addDays(easter, -3)),nameIs: "Skírdagur",            nameEn: "Maundy Thursday", type: "helgarfridagur" },
-    { date: toDateStr(addDays(easter, 1)), nameIs: "Annar í páskum",       nameEn: "Easter Monday", type: "helgarfridagur" },
-    { date: toDateStr(addDays(easter, 39)),nameIs: "Uppstigningardagur",   nameEn: "Ascension Day", type: "helgarfridagur" },
-    { date: toDateStr(addDays(easter, 50)),nameIs: "Annar í hvítasunnu",   nameEn: "Whit Monday", type: "helgarfridagur" },
-    { date: toDateStr(getFirstMondayOfAugust(year)), nameIs: "Frídagur verslunarmanna", nameEn: "Commerce Day", type: "helgarfridagur" },
-    { date: `${year}-12-26`,               nameIs: "Annar í jólum",        nameEn: "Boxing Day", type: "helgarfridagur" },
+    // ── Aðrir frídagar / helgidagar (gr. 2.3.2 / 3.2.2) ──────────────────────
+    { date: ymd(addDays(easter, -3)), nameIs: "Skírdagur", nameEn: "Maundy Thursday", type: "helgidagur" },
+    { date: ymd(addDays(easter, 1)), nameIs: "Annar í páskum", nameEn: "Easter Monday", type: "helgidagur" },
+    { date: ymd(firstDayOfSummer(year)), nameIs: "Sumardagurinn fyrsti", nameEn: "First Day of Summer", type: "helgidagur" },
+    { date: `${year}-05-01`, nameIs: "Verkalýðsdagurinn", nameEn: "Labour Day", type: "helgidagur" },
+    { date: ymd(addDays(easter, 39)), nameIs: "Uppstigningardagur", nameEn: "Ascension Day", type: "helgidagur" },
+    { date: ymd(addDays(easter, 50)), nameIs: "Annar í hvítasunnu", nameEn: "Whit Monday", type: "helgidagur" },
+    { date: ymd(firstMondayOfAugust(year)), nameIs: "Frídagur verslunarmanna", nameEn: "Commerce Day", type: "helgidagur" },
+    { date: `${year}-12-26`, nameIs: "Annar í jólum", nameEn: "Boxing Day", type: "helgidagur" },
   ];
 }
 
-// Returns a Map<dateStr, HolidayInfo> for fast lookups
+const cache = new Map<number, Map<string, HolidayInfo>>();
+
+/** Map<YYYY-MM-DD, HolidayInfo> for a year (memoised). */
 export function getHolidayMap(year: number): Map<string, HolidayInfo> {
-  const map = new Map<string, HolidayInfo>();
-  getIcelandicHolidays(year).forEach(h => map.set(h.date, h));
-  return map;
+  let m = cache.get(year);
+  if (!m) {
+    m = new Map(getIcelandicHolidays(year).map((h) => [h.date, h]));
+    cache.set(year, m);
+  }
+  return m;
 }
 
-// Returns just the Set of all holiday date strings (for quick membership test)
-export function getHolidaySet(year: number): Set<string> {
-  return new Set(getIcelandicHolidays(year).map(h => h.date));
+export function getHoliday(dateStr: string): HolidayInfo | undefined {
+  return getHolidayMap(Number(dateStr.slice(0, 4))).get(dateStr);
 }
 
 export function getHolidayName(dateStr: string, lang: "is" | "en" = "is"): string | null {
-  const year = parseInt(dateStr.slice(0, 4));
-  const h = getIcelandicHolidays(year).find(x => x.date === dateStr);
+  const h = getHoliday(dateStr);
   return h ? (lang === "is" ? h.nameIs : h.nameEn) : null;
 }

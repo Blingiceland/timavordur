@@ -28,6 +28,16 @@ við alvöru launakeyrslu.
 
 ---
 
+## Uppfærsla 30. september 2026
+
+Lokið á grein `launch-hardening-2026-10` (sjá `LAUNCH_TASKS.md`): aðgangslag og
+hlutverkavernd, PIN-takmarkanir, útgáfustýrð taxtaskrá með staðfestum töflum
+2026 og merktum 2027-drögum, leiðrétt launavél, dagsett ráðningarkjör,
+transaction-stimplun, aðgerðaskrá, læsing uppgjörs, CSV-útflutningur og
+migration. **Ekki lokið:** samanburður við bókara, prófuð endurheimt afrits,
+innlestrarsnið bókara og staðfest 2027-tafla. Forsenda kjarasamnings stóðst
+ekki í september 2026, svo fylgjast þarf með viðbragði fyrir 8.10.2026.
+
 ## Fasi 0 — Í loftið á Dillon (vika 1–2)
 
 Markmið: Dillon stimplar sig inn og út í Tímaverði **samhliða** núverandi
@@ -61,7 +71,7 @@ sem er borguð.
       launakeyrslu bókarans fyrir sama tímabil, manneskju fyrir manneskju.
       Hvert frávik er annaðhvort bögg í kerfinu eða skekkja í gamla ferlinu —
       hvort tveggja verðmætt.
-- [ ] **Launaexport** (stærsta einstaka fítusinn): CSV/Excel per tímabil sem
+- [~] **Launaexport**: almennt CSV er tilbúið (`docs/PAYROLL_EXPORT.md`); sértækt snið bíður upplýsinga frá bókara (stærsta einstaka fítusinn): CSV/Excel per tímabil sem
       bókarinn getur tekið beint inn. *Byrja á að spyrja bókarann hvaða
       launakerfi hann notar (Kjarni, Payday, DK, Origo…) og hvaða dálka hann
       þarf* — sníða exportið að því, ekki giska.
@@ -69,10 +79,10 @@ sem er borguð.
       yfirvinna umfram fulla vinnuskyldu, lágmarksútkall (t.d. 4 klst),
       11 klst hvíldarregla, neysluhlé. Ekki endilega útfæra allt strax, en
       vita hvað kerfið reiknar EKKI og merkja það skýrt í viðmótinu.
-- [ ] **Aðgerðaskrá (audit log)**: hver samþykkti leiðréttingu/vaktaskipti,
+- [x] **Aðgerðaskrá (audit log)**: `auditLog` undir hverju fyrirtæki, append-only: hver samþykkti leiðréttingu/vaktaskipti,
       hver breytti launaflokki, hvenær. Skilyrði þess að hægt sé að treysta
       tölunum þegar ágreiningur kemur upp.
-- [ ] **Lásun tímabils**: þegar launatímabil hefur verið gert upp á að vera
+- [x] **Lásun tímabils**: draft → reviewed → locked með snapshot; leiðréttingar eftir lokun eru sérfærslur: þegar launatímabil hefur verið gert upp á að vera
       hægt að "loka" því — leiðréttingar eftir það verða sér-merktar á næsta
       tímabili í stað þess að breyta sögunni
 
@@ -126,7 +136,7 @@ Aðeins þegar fasar 0–2 hafa sannað sig í eigin rekstri.
 - **Prófanir fylgi launavélinni**: hver ný regla (yfirvinna, lásun tímabils,
   nýr kjarasamningur) fær einingapróf í sömu andrá — launavélin er varan
 - **Tímabelti**: kerfið notar UTC (displayTime HH:MM UTC). Ísland er á UTC
-  allt árið svo þetta sleppur — en skjalfesta forsenduna og hafa próf sem
-  brotnar ef einhver breytir þessu
+  allt árið. Launavélin og prófin gera ráð fyrir því; öll tímabil eru
+  hálfopin UTC-bil [25., 25.)
 - **Ekki byggja fram fyrir þörf**: geofencing, native app, POS-tenging,
   webhooks — allt bíður þar til raunveruleg notkun kallar á það

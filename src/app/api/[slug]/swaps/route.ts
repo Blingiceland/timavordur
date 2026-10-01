@@ -1,190 +1,153 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
-import { verifyCompanyRole, isAccessError, atLeast } from "@/lib/auth";
+import { NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
-import { reportApiError } from "@/lib/report-error";
+import { adminDb } from "@/lib/firebase-admin";
+import { atLeast, isAccessError, staffRef, verifyCompanyRole } from "@/lib/auth";
+import { requestIdOf, writeAudit } from "@/lib/audit";
+import { accessFail, fail, handle, HttpError, json } from "@/lib/server/http";
+import { shiftsCol, swapsCol } from "@/lib/server/refs";
+import { resolveShift, sameShift, type ScheduledShift } from "@/lib/server/schedule-service";
+import { isEnum, readJsonObject } from "@/lib/validation";
 
-// Shift swapping: staff arrange a "cover" (give a shift away) or a direct "swap"
-// (exchange two shifts); a manager always approves before anything is applied.
+// Shift swapping: a "cover" (give a shift away) or a "swap" (exchange two
+// shifts). A manager always approves. Shifts are resolved on the server; the
+// client's description of a shift is never stored or trusted.
 
-interface ShiftSnapshot {
-  id: string;
-  date: string;        // YYYY-MM-DD
-  startTime: string;
-  endTime: string;
-  notes?: string;
-  source?: string;     // "single" | "template"
-  templateId?: string;
-}
+type Ctx = { params: Promise<{ slug: string }> };
+const today = () => new Date().toISOString().slice(0, 10);
 
-const swapsCol = (companyId: string) =>
-  adminDb.collection("tv_companies").doc(companyId).collection("swapRequests");
-const shiftsCol = (companyId: string) =>
-  adminDb.collection("tv_companies").doc(companyId).collection("shifts");
+const shiftIdOf = (v: unknown): string | null => {
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object" && typeof (v as { id?: unknown }).id === "string") return (v as { id: string }).id;
+  return null;
+};
 
-async function staffName(companyId: string, uid: string): Promise<string> {
-  const d = await adminDb.collection("tv_companies").doc(companyId).collection("staff").doc(uid).get();
-  return (d.data()?.name as string) || "";
-}
-
-// Move one shift from `fromUid` to `toUid`. Concrete (single) shifts are simply
-// reassigned; template-generated shifts are materialised into a single shift for
-// the new owner plus a cancelled override that hides the original owner's instance.
-async function reassignShift(companyId: string, shift: ShiftSnapshot, fromUid: string, fromName: string, toUid: string, toName: string) {
-  if (shift.source === "single") {
-    await shiftsCol(companyId).doc(shift.id).update({ uid: toUid, name: toName, updatedAt: new Date().toISOString() });
+/** Write the reassignment of one shift inside a transaction. */
+function reassign(tx: FirebaseFirestore.Transaction, companyId: string, s: ScheduledShift, toUid: string, toName: string) {
+  if (s.source === "single") {
+    tx.update(shiftsCol(companyId).doc(s.id), { uid: toUid, name: toName, updatedAt: new Date().toISOString(), fromSwap: true });
     return;
   }
-  // template expansion → materialise
-  await shiftsCol(companyId).add({
-    uid: toUid, name: toName, date: shift.date, startTime: shift.startTime, endTime: shift.endTime,
-    notes: shift.notes || "", status: "scheduled", source: "single", wageEstimate: 0, totalHours: 0,
-    fromSwap: true, createdAt: FieldValue.serverTimestamp(),
-  });
-  await shiftsCol(companyId).add({
-    uid: fromUid, name: fromName, date: shift.date, startTime: shift.startTime, endTime: shift.endTime,
-    status: "cancelled", source: "single", fromSwap: true, createdAt: FieldValue.serverTimestamp(),
-  });
+  const base = { date: s.date, startTime: s.startTime, endTime: s.endTime, source: "single", fromSwap: true, createdAt: FieldValue.serverTimestamp() };
+  tx.set(shiftsCol(companyId).doc(), { ...base, uid: toUid, name: toName, notes: s.notes, status: "scheduled" });
+  tx.set(shiftsCol(companyId).doc(), { ...base, uid: s.uid, name: s.name, status: "cancelled" });
 }
 
-// ── GET — requests visible to the caller ─────────────────────────────────────
-export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+export async function GET(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const access = await verifyCompanyRole(req, slug);
-  if (isAccessError(access)) return NextResponse.json({ error: access.error }, { status: access.status });
-  const { company, decoded, role } = access;
-  const isManager = atLeast(role, "manager");
-
-  try {
+  return handle("swaps GET", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "staff");
+    if (isAccessError(access)) return accessFail(access);
+    const { company, decoded, role } = access;
+    const isManager = atLeast(role, "manager");
     const snap = await swapsCol(company.id).where("status", "in", ["pending", "accepted"]).get();
-    const all = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Record<string, unknown>[];
-    const visible = all.filter(r => {
-      if (isManager) return true;                                   // managers see everything (incl. approvals)
-      if (r.type === "cover" && r.status === "pending") return true; // open covers anyone can take
-      return [r.fromUid, r.toUid, r.claimedByUid].includes(decoded.uid);
-    });
-    return NextResponse.json({ requests: visible, myRole: role });
-  } catch (err) {
-    await reportApiError("swaps GET", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+    const requests = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Record<string, unknown> & { id: string })
+      .filter((r) => isManager || (r.type === "cover" && r.status === "pending") || [r.fromUid, r.toUid, r.claimedByUid].includes(decoded.uid));
+    return json({ requests, myRole: role });
+  });
 }
 
-// ── POST — create a cover or swap request (the caller is the requester) ───────
-export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+export async function POST(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const access = await verifyCompanyRole(req, slug);
-  if (isAccessError(access)) return NextResponse.json({ error: access.error }, { status: access.status });
-  const { company, decoded } = access;
+  return handle("swaps POST", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "staff");
+    if (isAccessError(access)) return accessFail(access);
+    const { company, decoded, staff } = access;
+    const body = await readJsonObject(req);
+    if (!body || !isEnum(body.type, ["cover", "swap"] as const)) return fail("type_required", 400);
+    const fromId = shiftIdOf(body.fromShiftId ?? body.fromShift);
+    if (!fromId) return fail("fromShift_required", 400);
 
-  try {
-    const body = await req.json();
-    const type = body.type === "swap" ? "swap" : body.type === "cover" ? "cover" : null;
-    const fromShift = body.fromShift as ShiftSnapshot | undefined;
-    if (!type || !fromShift?.id || !fromShift.date) {
-      return NextResponse.json({ error: "type og fromShift krafist" }, { status: 400 });
+    const fromShift = await resolveShift(company.id, fromId);
+    if (fromShift.uid !== decoded.uid) return fail("not_your_shift", 403);
+    if (fromShift.date < today()) return fail("shift_in_past", 409);
+
+    const base = { type: body.type, status: "pending", fromUid: decoded.uid, fromName: staff.name || "", fromShift, createdAt: FieldValue.serverTimestamp() };
+    if (body.type === "cover") {
+      const ref = await swapsCol(company.id).add(base);
+      return json({ id: ref.id });
     }
-
-    const fromName = await staffName(company.id, decoded.uid) || decoded.name || "";
-    const base = {
-      type, status: "pending" as const,
-      fromUid: decoded.uid, fromName, fromShift,
-      createdAt: FieldValue.serverTimestamp(),
-    };
-
-    if (type === "swap") {
-      const toUid = typeof body.toUid === "string" ? body.toUid : "";
-      const toShift = body.toShift as ShiftSnapshot | undefined;
-      if (!toUid || !toShift?.id) return NextResponse.json({ error: "toUid og toShift krafist fyrir skipti" }, { status: 400 });
-      if (toUid === decoded.uid) return NextResponse.json({ error: "Ekki hægt að skipta við sjálfan sig" }, { status: 400 });
-      const toName = await staffName(company.id, toUid);
-      const ref = await swapsCol(company.id).add({ ...base, toUid, toName, toShift });
-      return NextResponse.json({ id: ref.id });
-    }
-
-    // cover
-    const ref = await swapsCol(company.id).add(base);
-    return NextResponse.json({ id: ref.id });
-  } catch (err) {
-    await reportApiError("swaps POST", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+    const toId = shiftIdOf(body.toShiftId ?? body.toShift);
+    if (!toId) return fail("toShift_required", 400);
+    const toShift = await resolveShift(company.id, toId);
+    if (toShift.uid === decoded.uid) return fail("cannot_swap_with_self", 400);
+    if (typeof body.toUid === "string" && body.toUid !== toShift.uid) return fail("toUid_mismatch", 400);
+    if (toShift.date < today()) return fail("shift_in_past", 409);
+    const target = await staffRef(company.id, toShift.uid).get();
+    if (!target.exists || target.data()!.status !== "approved") return fail("staff_not_found", 404);
+    const ref = await swapsCol(company.id).add({ ...base, toUid: toShift.uid, toName: target.data()!.name || "", toShift });
+    return json({ id: ref.id });
+  });
 }
 
-// ── PATCH — claim / accept / cancel / reject / approve / decline ──────────────
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+export async function PATCH(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const access = await verifyCompanyRole(req, slug);
-  if (isAccessError(access)) return NextResponse.json({ error: access.error }, { status: access.status });
-  const { company, decoded, role } = access;
-  const isManager = atLeast(role, "manager");
+  return handle("swaps PATCH", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "staff");
+    if (isAccessError(access)) return accessFail(access);
+    const { company, decoded, role, staff } = access;
+    const isManager = atLeast(role, "manager");
+    const body = await readJsonObject(req);
+    const actions = ["claim", "accept", "reject", "cancel", "decline", "approve"] as const;
+    if (!body || typeof body.id !== "string" || !isEnum(body.action, actions)) return fail("id_and_action_required", 400);
+    const action = body.action;
+    const ref = swapsCol(company.id).doc(body.id);
+    const requestId = requestIdOf(req);
+    const nowIso = () => new Date().toISOString();
 
-  try {
-    const { id, action } = await req.json();
-    if (!id || !action) return NextResponse.json({ error: "id og action krafist" }, { status: 400 });
+    await adminDb.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new HttpError(404, "not_found");
+      const r = snap.data()!;
+      const open = r.status === "pending" || r.status === "accepted";
+      if (!open) throw new HttpError(409, "already_resolved");
 
-    const ref = swapsCol(company.id).doc(id);
-    const doc = await ref.get();
-    if (!doc.exists) return NextResponse.json({ error: "Beiðni fannst ekki" }, { status: 404 });
-    const r = doc.data() as Record<string, unknown>;
-    const myUid = decoded.uid;
-    const myName = (await staffName(company.id, myUid)) || decoded.name || "";
-
-    switch (action) {
-      case "claim": { // staff B takes an open cover
-        if (r.type !== "cover" || r.status !== "pending") return NextResponse.json({ error: "Vakt ekki laus" }, { status: 409 });
-        if (r.fromUid === myUid) return NextResponse.json({ error: "Þú býður þessa vakt" }, { status: 400 });
-        await ref.update({ status: "accepted", claimedByUid: myUid, claimedByName: myName, claimedAt: new Date().toISOString() });
-        return NextResponse.json({ ok: true });
-      }
-      case "accept": { // staff B accepts a direct swap addressed to them
-        if (r.type !== "swap" || r.status !== "pending") return NextResponse.json({ error: "Ekki hægt að samþykkja" }, { status: 409 });
-        if (r.toUid !== myUid) return NextResponse.json({ error: "Ekki þín beiðni" }, { status: 403 });
-        await ref.update({ status: "accepted", acceptedAt: new Date().toISOString() });
-        return NextResponse.json({ ok: true });
-      }
-      case "reject": { // target declines
-        const target = r.toUid === myUid;
-        if (!target && !isManager) return NextResponse.json({ error: "Ekki heimilt" }, { status: 403 });
-        await ref.update({ status: "rejected", resolvedBy: myUid, resolvedAt: new Date().toISOString() });
-        return NextResponse.json({ ok: true });
-      }
-      case "cancel": { // requester withdraws
-        if (r.fromUid !== myUid) return NextResponse.json({ error: "Aðeins sá sem stofnaði getur hætt við" }, { status: 403 });
-        await ref.update({ status: "cancelled", resolvedAt: new Date().toISOString() });
-        return NextResponse.json({ ok: true });
-      }
-      case "decline": { // manager rejects
-        if (!isManager) return NextResponse.json({ error: "Aðeins yfirmaður" }, { status: 403 });
-        await ref.update({ status: "rejected", resolvedBy: myUid, resolvedAt: new Date().toISOString() });
-        return NextResponse.json({ ok: true });
-      }
-      case "approve": { // manager approves → apply
-        if (!isManager) return NextResponse.json({ error: "Aðeins yfirmaður" }, { status: 403 });
-        if (r.status !== "accepted") return NextResponse.json({ error: "Beiðni er ekki tilbúin til samþykkis" }, { status: 409 });
-        const fromShift = r.fromShift as ShiftSnapshot;
-        const fromUid = r.fromUid as string;
-        const fromName = r.fromName as string;
-
-        if (r.type === "cover") {
-          const toUid = r.claimedByUid as string;
-          const toName = r.claimedByName as string;
-          await reassignShift(company.id, fromShift, fromUid, fromName, toUid, toName);
-        } else {
-          const toUid = r.toUid as string;
-          const toName = r.toName as string;
-          const toShift = r.toShift as ShiftSnapshot;
-          await reassignShift(company.id, fromShift, fromUid, fromName, toUid, toName);
-          await reassignShift(company.id, toShift, toUid, toName, fromUid, fromName);
+      switch (action) {
+        case "claim":
+          if (r.type !== "cover" || r.status !== "pending") throw new HttpError(409, "not_available");
+          if (r.fromUid === decoded.uid) throw new HttpError(400, "own_shift");
+          tx.update(ref, { status: "accepted", claimedByUid: decoded.uid, claimedByName: staff.name || "", claimedAt: nowIso() });
+          return;
+        case "accept":
+          if (r.type !== "swap" || r.status !== "pending") throw new HttpError(409, "not_acceptable");
+          if (r.toUid !== decoded.uid) throw new HttpError(403, "not_addressed_to_you");
+          tx.update(ref, { status: "accepted", acceptedAt: nowIso() });
+          return;
+        case "reject":
+          if (r.toUid !== decoded.uid && !isManager) throw new HttpError(403, "forbidden");
+          tx.update(ref, { status: "rejected", resolvedBy: decoded.uid, resolvedAt: nowIso() });
+          return;
+        case "cancel":
+          if (r.fromUid !== decoded.uid) throw new HttpError(403, "only_requester");
+          tx.update(ref, { status: "cancelled", resolvedAt: nowIso() });
+          return;
+        case "decline":
+          if (!isManager) throw new HttpError(403, "manager_required");
+          tx.update(ref, { status: "rejected", resolvedBy: decoded.uid, resolvedAt: nowIso() });
+          writeAudit({ companyId: company.id, actorUid: decoded.uid, actorRole: role, action: "swap.decline", targetType: "swapRequest", targetId: ref.id, before: r, requestId }, tx);
+          return;
+        case "approve": {
+          if (!isManager) throw new HttpError(403, "manager_required");
+          if (r.status !== "accepted") throw new HttpError(409, "not_ready");
+          // Re-resolve the shifts now and require they are unchanged since the request.
+          const from = await resolveShift(company.id, r.fromShift.id, tx);
+          if (!sameShift(from, r.fromShift)) throw new HttpError(409, "shift_changed_since_request");
+          const takerUid: string = r.type === "cover" ? r.claimedByUid : r.toUid;
+          const taker = await tx.get(staffRef(company.id, takerUid));
+          if (!taker.exists || taker.data()!.status !== "approved") throw new HttpError(409, "staff_not_available");
+          let to: ScheduledShift | null = null;
+          if (r.type === "swap") {
+            to = await resolveShift(company.id, r.toShift.id, tx);
+            if (!sameShift(to, r.toShift)) throw new HttpError(409, "shift_changed_since_request");
+          }
+          const takerName = taker.data()!.name || "";
+          reassign(tx, company.id, from, takerUid, takerName);
+          if (to) reassign(tx, company.id, to, r.fromUid, r.fromName);
+          tx.update(ref, { status: "approved", approvedBy: decoded.uid, approvedAt: nowIso() });
+          writeAudit({ companyId: company.id, actorUid: decoded.uid, actorRole: role, action: "swap.approve", targetType: "swapRequest", targetId: ref.id, before: r, after: { from, to, takerUid }, requestId }, tx);
+          return;
         }
-        await ref.update({ status: "approved", approvedBy: myUid, approvedAt: new Date().toISOString() });
-        return NextResponse.json({ ok: true });
       }
-      default:
-        return NextResponse.json({ error: "Óþekkt aðgerð" }, { status: 400 });
-    }
-  } catch (err) {
-    await reportApiError("swaps PATCH", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+    });
+    return json({ ok: true });
+  });
 }
