@@ -12,6 +12,7 @@ import {
   EMPTY_REG, EMPTY_STAFF, REG_FIELDS_DEFAULTS, ALL_REG_FIELD_KEYS, ALL_REG_FIELD_LABELS,
 } from "./_portal/constants";
 import { StaffFormFields } from "./_portal/StaffFormFields";
+import { OnboardingCard, type OnboardingState } from "./_portal/Onboarding";
 
 export default function CompanyPortal() {
   const { slug } = useParams() as { slug: string };
@@ -51,6 +52,7 @@ export default function CompanyPortal() {
   // Workplace picked for the next punch-in when the person works at several.
   const [punchSlug, setPunchSlug] = useState<string>("");
   const [editCompanies, setEditCompanies] = useState<string[]>([]);
+  const [companyClosed, setCompanyClosed] = useState(false);
   // Registration
   const [regForm, setRegForm] = useState<Record<string, string>>(EMPTY_REG);
   const [regSubmitting, setRegSubmitting] = useState(false);
@@ -80,7 +82,8 @@ export default function CompanyPortal() {
   }, [slug]);
 
   useEffect(() => {
-    fetch(`/api/${slug}/company`).then(r => r.ok ? r.json() : null).then(d => {
+    fetch(`/api/${slug}/company`).then(r => r.json().catch(() => null)).then(d => {
+      if (d?.error === "company_suspended") setCompanyClosed(true);
       if (d?.groupCompanies) { setGroupList(d.groupCompanies); setChosenCompanies([slug]); }
     }).catch(() => { /* non-critical */ });
   }, [slug]);
@@ -323,12 +326,12 @@ export default function CompanyPortal() {
 
   // Saves one settings section. "Saved" is shown ONLY after the server accepted
   // the change; on 4xx/5xx or network failure the edits stay in the form.
-  const saveSettings = async (section: "business" | "fields" | "network") => {
+  const saveSettings = async (section: "business" | "fields" | "network", override?: object) => {
     if (!user) return;
-    const payload =
+    const payload = override ?? (
       section === "business" ? { businessType } :
       section === "fields" ? { registrationFields: regFields } :
-      { ipRestriction: { enabled: ipEnabled, allowedIPs: ipList.split(/[\s,]+/).map(x => x.trim()).filter(Boolean) } };
+      { ipRestriction: { enabled: ipEnabled, allowedIPs: ipList.split(/[\s,]+/).map(x => x.trim()).filter(Boolean) } });
     setSettingsSaving(section); setSettingsResult(null);
     try {
       const token = await user.getIdToken();
@@ -340,6 +343,37 @@ export default function CompanyPortal() {
       setSettingsResult({ section, ok: false, text: lang === "en" ? "Network error — not saved. Your changes are kept." : "Netvilla — ekki vistað. Breytingarnar eru enn í forminu." });
     } finally { setSettingsSaving(null); }
   };
+  const dismissOnboarding = async () => {
+    if (!user) return;
+    const token = await user.getIdToken();
+    const res = await fetch(`/api/${slug}/admin/settings`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ onboardingDismissed: true }) });
+    if (res.ok) await fetchPortal(); else showMsg(lang === "en" ? "Could not save" : "Ekki tókst að vista", false);
+  };
+  // Fill the allow-list with the address the server sees right now (the venue's Wi-Fi).
+  // One click: read the address the server sees right now (the venue's Wi-Fi),
+  // add it to the allow-list, turn the restriction on and save — no separate step.
+  const useMyNetwork = async () => {
+    if (!user || settingsSaving) return;
+    setSettingsSaving("network"); setSettingsResult(null);
+    let ip = "";
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/${slug}/admin/my-ip`, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json().catch(() => ({}));
+      ip = res.ok && typeof d.ip === "string" ? d.ip : "";
+    } catch { /* handled below */ }
+    setSettingsSaving(null);
+    if (!ip) {
+      setSettingsResult({ section: "network", ok: false, text: lang === "en" ? "Could not detect your network address — nothing was changed." : "Ekki tókst að greina netfang tengingarinnar — engu var breytt." });
+      return;
+    }
+    const current = ipList.split(/[\s,]+/).map(x => x.trim()).filter(Boolean);
+    const next = current.includes(ip) ? current : [...current, ip];
+    setIpEnabled(true);
+    setIpList(next.join("\n"));
+    await saveSettings("network", { ipRestriction: { enabled: true, allowedIPs: next } });
+  };
+
   const SettingsStatus = ({ section }: { section: string }) => settingsResult?.section === section
     ? <span role={settingsResult.ok ? "status" : "alert"} style={{ color: settingsResult.ok ? "var(--accent)" : "var(--danger)", fontSize: "0.9rem" }}>{settingsResult.text}</span>
     : null;
@@ -360,6 +394,17 @@ export default function CompanyPortal() {
             <span style={{ fontWeight: 600 }}>{label}</span>
           </button>
         ))}
+      </div>
+    </div>
+  );
+
+  // ─── Company closed by the operator ───────────────────────────────────────
+  if (companyClosed) return (
+    <div className="page" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 16 }}>
+      <div className="card" role="alert" style={{ maxWidth: 420, padding: 32, textAlign: "center" }}>
+        <div style={{ fontSize: "2.4rem" }}>🔒</div>
+        <h1 style={{ fontSize: "1.2rem" }}>{lang === "en" ? "Access closed" : "Aðgangi lokað"}</h1>
+        <p className="text-secondary">{lang === "en" ? "This workplace's access to Tímavörður has been closed. Please contact the owner." : "Aðgangi þessa staðar að Tímaverði hefur verið lokað. Hafðu samband við eiganda."}</p>
       </div>
     </div>
   );
@@ -675,8 +720,13 @@ export default function CompanyPortal() {
           </div>
         )}
 
+        {isOwner && portal.onboarding && (
+          <OnboardingCard state={portal.onboarding as OnboardingState} slug={slug} companyName={portal.companyName || slug} lang={lang}
+            goSettings={() => setTab("settings")} goStaff={() => setTab("staff")} onDismiss={dismissOnboarding} />
+        )}
+
         {/* Registration link (admin+) */}
-        {canManage && (
+        {canManage && !(isOwner && portal.onboarding) && (
           <div className="card card--brand" style={{ marginBottom: "24px", padding: "16px 20px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
               <div>
@@ -1053,6 +1103,8 @@ export default function CompanyPortal() {
                 <input type="checkbox" checked={ipEnabled} onChange={e => setIpEnabled(e.target.checked)} />
                 {lang === "is" ? "Takmörkun virk" : "Restriction enabled"}
               </label>
+              <button type="button" className="btn btn--secondary btn--sm" style={{ marginBottom: 8 }} onClick={useMyNetwork} disabled={settingsSaving !== null}>📶 {settingsSaving === "network" ? t.saving : (lang === "is" ? "Nota netið sem ég er á núna og vista" : "Use the network I'm on now and save")}</button>
+              <p className="text-muted" style={{ fontSize: "0.78rem", marginTop: 0 }}>{lang === "is" ? "Gerðu þetta tengd(ur) Wi-Fi staðarins (ekki farsímaneti)." : "Do this while connected to the venue's Wi-Fi (not mobile data)."}</p>
               <textarea className="form-input" rows={3} value={ipList} onChange={e => setIpList(e.target.value)} aria-label={lang === "is" ? "Leyfðar IP-tölur" : "Allowed IP addresses"} style={{ fontFamily: "monospace" }} />
               <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12 }}>
                 <button className="btn btn--primary" onClick={() => saveSettings("network")} disabled={settingsSaving !== null}>{settingsSaving === "network" ? t.saving : t.save}</button>

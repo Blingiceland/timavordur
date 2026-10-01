@@ -22,6 +22,31 @@ Kjör, yfirvinna, uppgjör og útflutningur haldast aðskilin eftir fyrirtæki.
 Superadmin tengir fyrirtæki í hóp á `/superadmin`, en aðeins meðan nýja
 fyrirtækið hefur ekkert starfsfólk.
 
+## Nýir staðir skrá sig sjálfir
+
+Heimili vörunnar er `timavordur.bling.is`. Þar er forsíða með „Byrja frítt“, og hvert fyrirtæki er á `/{slug}`.
+
+1. **`/byrja`:** eigandi skráir sig inn með Google (staðfest netfang) og fyllir út eitt form:
+   - nafn og slóð (stungið upp á úr nafninu og athugað hvort hún sé laus);
+   - kennitala, með vartölu-athugun;
+   - tegund reksturs og sími;
+   - samþykki á skilmálum og vinnslusamningi.
+2. Fyrirtækið verður til **strax** (`status: active`, `plan: free`, `source: self`), og eigandinn verður owner.
+3. Þá berast tveir póstar:
+   - til `SUPERADMIN_NOTIFY_EMAIL`, með upplýsingum um nýja staðinn;
+   - til eiganda, velkominn póstur með fyrstu skrefum.
+4. Á forsíðu staðarins sér eigandi gátlistann **Fyrstu skrefin**. Hvert skref hakast sjálfkrafa þegar gögnin eru til:
+   - tegund reksturs;
+   - Wi-Fi-takmörkun, með einum smelli: „Nota netið sem ég er á núna og vista“;
+   - QR-kóði og hlekkur fyrir starfsfólk, með prentanlegu veggspjaldi;
+   - samþykkja starfsfólk (PIN fer í pósti);
+   - skrá kjör;
+   - fyrsta vaktaplanið.
+
+Slóð og kennitala eru einstök (vísar `tv_slugs`, `tv_kennitolur` í sömu færslu). Hver notandi getur stofnað 3 fyrirtæki á sólarhring og hver IP-tala 10. Superadmin getur **lokað** fyrirtæki (`status: suspended`); þá er öllum innskráningum hafnað en gögnin haldast. Opnun er jafn einföld.
+
+Skilmálar, vinnslusamningur og persónuverndarupplýsingar (`/skilmalar`, `/vinnslusamningur`, `/personuvernd`) eru **drög** með útgáfunúmeri (`src/lib/legal.ts`). Lögfræðingur þarf að yfirfara þau áður en opnað er fyrir ókunnuga.
+
 ## Hlutverk
 
 | Hlutverk     | Aðgangur |

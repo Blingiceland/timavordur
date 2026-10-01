@@ -44,8 +44,15 @@ export interface Company {
   businessType?: BusinessType;          // "bar" | "restaurant" — gates the 55% night premium
   /** LEGACY, no longer used for pay — see employmentTerms. */
   wageCategories?: WageCategory[];
+  /** "suspended" = closed by superadmin; every login and API call is refused. */
+  status?: "active" | "suspended";
+  /** How the company was created. */
+  source?: "superadmin" | "self";
+  plan?: "free";
+  contactPhone?: string;
   /** Only populated by the superadmin company-list endpoint. */
   staffCount?: number;
+  lastActivity?: string | null;
 }
 
 // ── Staff (tv_companies/{id}/staff/{uid}) ────────────────────────────────────

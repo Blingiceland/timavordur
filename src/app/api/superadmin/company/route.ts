@@ -21,12 +21,23 @@ export async function PATCH(req: NextRequest) {
     const removeEmail = typeof body?.removEmail === "string" ? body.removEmail.trim().toLowerCase() : "";
     if (addEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addEmail)) return fail("invalid_email", 400);
     const linkToSlug = typeof body?.linkToSlug === "string" ? body.linkToSlug : "";
-    if (!addEmail && !removeEmail && !linkToSlug) return fail("no_changes", 400);
+    const suspend = typeof body?.suspend === "boolean" ? body.suspend : null;
+    if (!addEmail && !removeEmail && !linkToSlug && suspend === null) return fail("no_changes", 400);
 
     const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).limit(1).get();
     if (snap.empty) return fail("company_not_found", 404);
     const companyRef = snap.docs[0].ref;
     const staff = companyRef.collection("staff");
+
+    if (suspend !== null) {
+      // Close or reopen a company. Data is kept; every login and API call is refused while closed.
+      await adminDb.runTransaction(async (tx) => {
+        const before = (await tx.get(companyRef)).data()?.status ?? "active";
+        tx.update(companyRef, { status: suspend ? "suspended" : "active", statusChangedAt: FieldValue.serverTimestamp(), statusChangedBy: su.uid });
+        writeAudit({ companyId: companyRef.id, actorUid: su.uid, actorRole: "superadmin", action: suspend ? "company.suspend" : "company.reopen", targetType: "company", targetId: companyRef.id, before: { status: before }, after: { status: suspend ? "suspended" : "active" }, requestId: requestIdOf(req) }, tx);
+      });
+      if (!addEmail && !removeEmail && !linkToSlug) return json({ ok: true, status: suspend ? "suspended" : "active" });
+    }
 
     if (linkToSlug) {
       // Join another company's group. Only while this company has no staff, so no

@@ -28,7 +28,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
     if (isAccessError(access)) return accessFail(access);
     const body = await readJsonObject(req);
     if (!body) return fail("invalid_body", 400);
-    const extra = unknownKeys(body, ["registrationFields", "ipRestriction", "requireApproval", "businessType"]);
+    const extra = unknownKeys(body, ["registrationFields", "ipRestriction", "requireApproval", "businessType", "onboardingDismissed"]);
     if (extra.length) return fail(`field_not_allowed:${extra.join(",")}`, 400);
 
     const updates: Record<string, unknown> = {};
@@ -57,6 +57,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
     if (body.businessType !== undefined) {
       if (!isEnum(body.businessType, ["bar", "restaurant"] as const)) return fail("businessType:invalid", 400);
       updates.businessType = body.businessType;
+      updates["onboarding.businessTypeConfirmed"] = true;
+    }
+    if (body.onboardingDismissed !== undefined) {
+      if (typeof body.onboardingDismissed !== "boolean") return fail("onboardingDismissed:boolean", 400);
+      updates["onboarding.dismissed"] = body.onboardingDismissed;
     }
     if (Object.keys(updates).length === 0) return fail("no_changes", 400);
 
@@ -67,7 +72,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
       writeAudit({
         companyId: access.company.id, actorUid: access.decoded.uid, actorRole: access.role, action: "company.settings",
         targetType: "company", targetId: access.company.id,
-        before: Object.fromEntries(Object.keys(updates).map((k) => [k, before[k] ?? null])), after: updates, requestId: requestIdOf(req),
+        before: Object.fromEntries(Object.keys(updates).map((k) => [k, k.startsWith("onboarding.") ? (before.onboarding ?? {})[k.slice(11)] ?? null : before[k] ?? null])), after: updates, requestId: requestIdOf(req),
       }, tx);
     });
     return json({ ok: true, ...updates });

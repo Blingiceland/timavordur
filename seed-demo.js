@@ -4,7 +4,7 @@
  * Notkun:  node seed-demo.js
  * Þarf:    service-account-key.json í verkefnisrótinni.
  *
- * Eftir keyrslu: timon.bling.is/demo  (skráðu inn sem t.d.  jon / 1234)
+ * Eftir keyrslu: timavordur.bling.is/demo  (skráðu inn sem t.d.  jon / 4826)
  * Hreinsa síðar: node seed-demo.js --clear
  */
 const admin = require("firebase-admin");
@@ -15,7 +15,7 @@ admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 const db = admin.firestore();
 
 const SLUG = "demo";
-const PIN = "1234";
+const PIN = "4826"; // not a "weak" PIN (the app refuses 1234, 0000, years …)
 const ADMIN_EMAIL = "jon@dillon.is"; // má stýra demo-inu með Google líka
 
 // scrypt — sama og src/lib/password.ts
@@ -26,7 +26,7 @@ function hashPin(pin) {
 }
 
 const STAFF = [
-  { username: "jon",   name: "Jón Bjarnason",        role: "admin",   hourlyRate: 2100, jobTitle: "Vaktstjóri" },
+  { username: "jon",   name: "Jón Bjarnason",        role: "manager", hourlyRate: 2100, jobTitle: "Vaktstjóri" }, // PIN accounts max "manager"
   { username: "anna",  name: "Anna Sigurðardóttir",  role: "staff",   hourlyRate: 2200, jobTitle: "Barþjónn" },
   { username: "klara", name: "Klara Ólafsdóttir",    role: "staff",   hourlyRate: 2050, jobTitle: "Þjónn" },
   { username: "mihai", name: "Mihai Popescu",        role: "staff",   hourlyRate: 1980, jobTitle: "Eldhús" },
@@ -43,19 +43,24 @@ function periodStart() {
 async function companyRef() {
   const snap = await db.collection("tv_companies").where("slug", "==", SLUG).limit(1).get();
   if (!snap.empty) return snap.docs[0].ref;
-  return db.collection("tv_companies").add({
-    name: "Demo Bistró", slug: SLUG, kennitala: "000000-0000",
-    adminEmails: [ADMIN_EMAIL], active: true, requireApproval: false,
-    registrationFields: {}, ipRestriction: { enabled: false, allowedIPs: [] },
+  const ref = db.collection("tv_companies").doc();
+  await ref.set({
+    name: "Demo Bistró", slug: SLUG, kennitala: "", groupId: ref.id, status: "active", source: "superadmin", plan: "free",
+    adminEmails: [ADMIN_EMAIL], active: true, requireApproval: false, businessType: "restaurant",
+    registrationFields: {}, ipRestriction: { enabled: false, allowedIPs: [] }, onboarding: { dismissed: true },
     createdAt: new Date().toISOString().slice(0, 10),
-  }).then(r => r);
+  });
+  await db.collection("tv_slugs").doc(SLUG).set({ companyId: ref.id });
+  return ref;
 }
 
 async function clear(cref) {
-  for (const sub of ["staff", "punchRecords", "shifts", "shiftTemplates", "swapRequests"]) {
-    const s = await cref.collection(sub).get();
-    const b = db.batch(); s.docs.forEach(d => b.delete(d.ref)); await b.commit();
+  const groupId = (await cref.get()).data()?.groupId || cref.id;
+  for (const sub of ["staff", "punchRecords", "punchState", "punchIdempotency", "shifts", "shiftTemplates", "swapRequests", "punchCorrections", "employmentTerms", "payrollPeriods", "payrollAdjustments"]) {
+    await db.recursiveDelete(cref.collection(sub));
   }
+  await db.recursiveDelete(db.collection("tv_groups").doc(groupId).collection("pinAccounts"));
+  await db.recursiveDelete(db.collection("tv_groups").doc(groupId).collection("usernames"));
   console.log("🗑  Demo-gögn hreinsuð.");
 }
 
@@ -103,13 +108,24 @@ function buildShifts(staffIndex) {
   console.log(`\n🏢 Demo Bistró (${SLUG}) — bý til ${STAFF.length} starfsmenn...`);
   for (let i = 0; i < STAFF.length; i++) {
     const s = STAFF[i];
-    const uid = `demo_${s.username}`;
+    const uid = `pw_demo_${s.username}`;
+    const groupId = (await cref.get()).data().groupId || cid;
+    // Shared login lives at group level (tv_groups/{groupId}).
+    await db.collection("tv_groups").doc(groupId).collection("pinAccounts").doc(uid).set({ uid, username: s.username, name: s.name, email: null, pinVersion: 0, ...hashPin(PIN) });
+    await db.collection("tv_groups").doc(groupId).collection("usernames").doc(s.username).set({ uid });
     await cref.collection("staff").doc(uid).set({
-      uid, username: s.username, authType: "password", ...hashPin(PIN),
+      uid, username: s.username, authType: "password",
       name: s.name, role: s.role, status: "approved", language: "is",
       jobTitle: s.jobTitle, employmentType: "full-time",
-      payType: "hourly", hourlyRate: s.hourlyRate, collectiveAgreement: "efling_sa",
       addedAt: admin.firestore.FieldValue.serverTimestamp(), registeredSelf: false,
+    });
+    // Dated pay terms (fictional) so timesheets compute against the agreement.
+    await cref.collection("employmentTerms").doc(`demo_${s.username}`).set({
+      uid, effectiveFrom: "2026-01-01", recordedAt: admin.firestore.FieldValue.serverTimestamp(), recordedBy: "seed-demo",
+      reason: "Sýnigögn", status: "active", agreementId: "efling_sa_hotel", workingArrangement: "shift", payType: "hourly",
+      employmentPercentage: 100, wageClass: i === 0 ? 7 : 6, managementRole: false, birthDate: "1995-01-01",
+      employerStartDate: "2025-01-01", priorIndustryMonths: null, experienceVerifiedOn: null, stepOverride: null,
+      personalDayRate: null, monthlySalary: null, fixedAdditions: [], orlofOverrideBp: null, legacy: null,
     });
 
     // punches (timesheets)
@@ -123,13 +139,13 @@ function buildShifts(staffIndex) {
     // upcoming shifts (schedule)
     for (const sh of buildShifts(i)) {
       const ref = cref.collection("shifts").doc();
-      batch.set(ref, { uid, name: s.name, date: sh.date, startTime: sh.startTime, endTime: sh.endTime, status: "scheduled", source: "single", wageEstimate: 0, totalHours: 0 });
+      batch.set(ref, { uid, name: s.name, date: sh.date, startTime: sh.startTime, endTime: sh.endTime, status: "scheduled", notes: "" });
     }
     await batch.commit();
     console.log(`  ✅ ${s.name}  (${s.username} / ${PIN})  · ${s.role}`);
   }
 
-  console.log(`\n🎉 Tilbúið!  →  timon.bling.is/${SLUG}`);
+  console.log(`\n🎉 Tilbúið!  →  timavordur.bling.is/${SLUG}`);
   console.log(`   Prófaðu:  notendanafn  jon  ·  PIN  ${PIN}   (vaktstjóri)`);
   console.log(`   Hreinsa:  node seed-demo.js --clear\n`);
   process.exit(0);

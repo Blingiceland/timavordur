@@ -147,8 +147,28 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         addedAt: toIso(s.addedAt || s.registeredAt), companies: companiesByUid.get(d.id) ?? [company.slug],
       };
     });
+    // First steps for the owner (each step is derived from real data).
+    let onboarding: Record<string, boolean> | null = null;
+    if (role === "owner") {
+      const raw = (await companyRef(company.id).get()).data()?.onboarding ?? {};
+      if (!raw.dismissed) {
+        const [terms, shifts, templates] = await Promise.all([
+          companyRef(company.id).collection("employmentTerms").limit(1).get(),
+          companyRef(company.id).collection("shifts").limit(1).get(),
+          companyRef(company.id).collection("shiftTemplates").limit(1).get(),
+        ]);
+        onboarding = {
+          businessType: !!raw.businessTypeConfirmed,
+          network: !!company.ipRestriction?.enabled,
+          staffJoined: staffSnap.size > 1,
+          staffApproved: staffSnap.docs.some((d) => d.id !== decoded.uid && d.data().status === "approved"),
+          terms: !terms.empty,
+          schedule: !shifts.empty || !templates.empty,
+        };
+      }
+    }
     return json({
-      ...base, team, staffList, manageableCompanies: manageable, registrationFields: company.registrationFields,
+      ...base, team, staffList, manageableCompanies: manageable, onboarding, registrationFields: company.registrationFields,
       requireApproval: company.requireApproval, ipRestriction: company.ipRestriction, businessType: company.businessType,
     });
   });

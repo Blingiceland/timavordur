@@ -5,8 +5,11 @@ export const BRANDED_HOSTS: Record<string, string> = {
   "pablo-discobar": "staff.discobar.is",
 };
 
-/** Login URL for a company: its branded host if any, else <origin>/<slug>. */
-export function loginUrlFor(slug: string, fallbackOrigin: string): string {
+/** Home of the product: landing page, sign-up (/byrja) and every company at /{slug}. */
+export const PRODUCT_HOST = process.env.NEXT_PUBLIC_PRODUCT_HOST || "timavordur.bling.is";
+
+/** Login URL for a company: its branded host if any, else https://PRODUCT_HOST/<slug>. */
+export function loginUrlFor(slug: string): string {
   const host = BRANDED_HOSTS[slug];
-  return host ? `https://${host}/` : `${fallbackOrigin.replace(/\/$/, "")}/${slug}`;
+  return host ? `https://${host}/` : `https://${PRODUCT_HOST}/${slug}`;
 }

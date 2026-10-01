@@ -59,6 +59,7 @@ export async function getCompanyBySlug(slug: string): Promise<Company | null> {
   if (!SLUG_RE.test(slug)) return null;
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(2).get();
   if (snap.size !== 1) return null; // missing, or an ambiguous duplicate slug
+  if (snap.docs[0].data().status === "suspended") return null; // closed by superadmin: no access at all
   return companyFromDoc(snap.docs[0].id, snap.docs[0].data());
 }
 
@@ -118,7 +119,7 @@ export async function verifyCompanyMember(req: NextRequest, slug: string): Promi
   const decoded = await verifyToken(req);
   if (!decoded) return { error: "unauthorized", status: 401 };
   const company = await getCompanyBySlug(slug);
-  if (!company) return { error: "company_not_found", status: 404 };
+  if (!company) return (await isSuspended(slug)) ? { error: "company_suspended", status: 403 } : { error: "company_not_found", status: 404 };
   if (decoded.tv_pin && decoded.tv_group !== company.groupId) return { error: "wrong_tenant", status: 403 };
   const [doc, pinDoc] = await Promise.all([
     staffRef(company.id, decoded.uid).get(),
@@ -160,4 +161,11 @@ export async function approvedOwnerCount(companyId: string, tx?: FirebaseFiresto
     .where("role", "==", "owner").where("status", "==", "approved");
   const snap = tx ? await tx.get(q) : await q.get();
   return snap.size;
+}
+
+/** True when a company with this slug exists but has been suspended. */
+export async function isSuspended(slug: string): Promise<boolean> {
+  if (!SLUG_RE.test(slug)) return false;
+  const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).limit(1).get();
+  return !snap.empty && snap.docs[0].data().status === "suspended";
 }

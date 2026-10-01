@@ -52,7 +52,7 @@ export async function issuePin(p: {
   if (!email) return { emailed: false, pin, email: null, reason: "no_email" };
   const res = await sendMail(pinMessage({
     to: email, name: acct.name || acct.username, username: acct.username, pin,
-    workplaces: p.workplaceNames, loginUrl: loginUrlFor(p.loginSlug, p.origin), reset: p.reset,
+    workplaces: p.workplaceNames, loginUrl: loginUrlFor(p.loginSlug), reset: p.reset,
   }));
   return res.sent ? { emailed: true, email } : { emailed: false, pin, email, reason: res.reason };
 }

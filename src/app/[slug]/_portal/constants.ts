@@ -58,6 +58,8 @@ const ERRORS: Record<string, [string, string]> = {
   invalid_email: ["Ógilt netfang", "Invalid e-mail address"],
   email_required_for_generated_pin: ["Settu inn netfang eða PIN", "Enter an e-mail address or a PIN"],
   not_approved: ["Starfsmaður er ekki samþykktur", "The employee is not approved"],
+  company_suspended: ["Aðgangi þessa staðar hefur verið lokað", "This workplace's access has been closed"],
+  company_not_found: ["Staður fannst ekki", "Workplace not found"],
   concurrent_request: ["Önnur stimplun var í vinnslu — ýttu aftur", "Another punch was in progress — press again"],
   forbidden: ["Þú hefur ekki heimild til þessa", "You are not allowed to do this"],
   server_error: ["Villa á þjóni — ekkert var vistað. Reyndu aftur.", "Server error — nothing was saved. Try again."],
