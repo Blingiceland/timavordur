@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
         active: data.active ?? true,
         createdAt: data.createdAt,
         kennitala: data.kennitala || "",
+        groupId: data.groupId || doc.id,
         staffCount: staffSnap.data().count,
       } as Partial<Company> & { staffCount: number });
     }
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Ekki superadmin" }, { status: 403 });
   }
   try {
-    const { name, slug, adminEmail, kennitala } = await req.json();
+    const { name, slug, adminEmail, kennitala, linkToSlug } = await req.json();
 
     if (!name || !slug || !adminEmail) {
       return NextResponse.json({ error: "Vantar nafn, slug eða admin-netfang" }, { status: 400 });
@@ -78,12 +79,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Slug er þegar í notkun" }, { status: 409 });
     }
 
+    // Optional: join the group of an existing company (shared staff logins).
+    let groupId: string | null = null;
+    if (linkToSlug) {
+      const other = await adminDb.collection("tv_companies").where("slug", "==", String(linkToSlug)).limit(1).get();
+      if (other.empty) return NextResponse.json({ error: "Fyrirtæki til að tengja við fannst ekki" }, { status: 404 });
+      groupId = (other.docs[0].data().groupId as string) || other.docs[0].id;
+      if (!other.docs[0].data().groupId) await other.docs[0].ref.update({ groupId });
+    }
+
     const createdAt = new Date().toISOString().slice(0, 10);
-    const docRef = await adminDb.collection("tv_companies").add({
+    const newRef = adminDb.collection("tv_companies").doc();
+    await newRef.set({
+      groupId: groupId ?? newRef.id,
       name,
       slug,
       kennitala: kennitala || "",
-      adminEmails: [adminEmail],
+      adminEmails: [adminEmail.trim().toLowerCase()],
       active: true,
       requireApproval: true,
       registrationFields: {},
@@ -91,13 +103,15 @@ export async function POST(req: NextRequest) {
       createdAt,
       createdTimestamp: FieldValue.serverTimestamp(),
     });
+    const docRef = newRef;
 
     return NextResponse.json({
       id: docRef.id,
+      groupId: groupId ?? docRef.id,
       name,
       slug,
       kennitala: kennitala || "",
-      adminEmails: [adminEmail],
+      adminEmails: [adminEmail.trim().toLowerCase()],
       active: true,
       createdAt,
       staffCount: 0,

@@ -1,63 +1,75 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth } from "@/lib/firebase-admin";
+import { NextRequest } from "next/server";
+import { adminDb } from "@/lib/firebase-admin";
+import { isAccessError, verifyCompanyRole } from "@/lib/auth";
+import { requestIdOf, writeAudit } from "@/lib/audit";
+import { normaliseAllowList } from "@/lib/ip";
+import { accessFail, fail, handle, json } from "@/lib/server/http";
+import { companyRef } from "@/lib/server/refs";
+import { isEnum, readJsonObject, unknownKeys } from "@/lib/validation";
 
-async function getCompany(slug: string) {
-  const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
-  if (snap.empty) return null;
-  return { id: snap.docs[0].id, ...(snap.docs[0].data() as { name: string; adminEmails?: string[]; registrationFields?: object; ipRestriction?: object }) };
-}
+const FIELD_KEYS = ["name", "ssn", "phone", "address", "bankName", "bankAccount", "union", "pension", "workPermit", "workPermitExpiry", "jobTitle", "employmentType"];
+const LEVELS = ["required", "optional", "hidden"] as const;
 
-async function verifyAdmin(req: NextRequest, slug: string) {
-  const auth = req.headers.get("Authorization");
-  if (!auth?.startsWith("Bearer ")) return null;
-  try {
-    const decoded = await adminAuth.verifyIdToken(auth.split(" ")[1]);
-    const company = await getCompany(slug);
-    if (!company || !(company.adminEmails || []).includes(decoded.email || "")) return null;
-    return { decoded, company };
-  } catch { return null; }
-}
-
-// GET /api/[slug]/admin/settings — get company settings
+// GET — admin+ can read; PATCH — owner only (same as the Settings tab).
 export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const result = await verifyAdmin(req, slug);
-  if (!result) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const c = result.company as Record<string, unknown>;
-  return NextResponse.json({
-    registrationFields: c.registrationFields || {},
-    ipRestriction: c.ipRestriction || { enabled: false, allowedIPs: [] },
-    businessType: c.businessType === "restaurant" ? "restaurant" : "bar",
-    wageCategories: c.wageCategories || [],
+  return handle("admin/settings GET", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "admin");
+    if (isAccessError(access)) return accessFail(access);
+    const c = access.company;
+    return json({ registrationFields: c.registrationFields, ipRestriction: c.ipRestriction, requireApproval: c.requireApproval, businessType: c.businessType });
   });
 }
 
-// PATCH /api/[slug]/admin/settings — update company settings
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const result = await verifyAdmin(req, slug);
-  if (!result) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { company } = result;
+  return handle("admin/settings PATCH", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "owner");
+    if (isAccessError(access)) return accessFail(access);
+    const body = await readJsonObject(req);
+    if (!body) return fail("invalid_body", 400);
+    const extra = unknownKeys(body, ["registrationFields", "ipRestriction", "requireApproval", "businessType"]);
+    if (extra.length) return fail(`field_not_allowed:${extra.join(",")}`, 400);
 
-  const body = await req.json();
-  const updates: Record<string, unknown> = {};
-  if (body.registrationFields !== undefined) updates.registrationFields = body.registrationFields;
-  if (body.ipRestriction !== undefined) updates.ipRestriction = body.ipRestriction;
-  if (body.requireApproval !== undefined) updates.requireApproval = body.requireApproval;
-  if (body.businessType === "bar" || body.businessType === "restaurant") updates.businessType = body.businessType;
-  if (Array.isArray(body.wageCategories)) {
-    // sanitise each category
-    updates.wageCategories = body.wageCategories
-      .filter((c: unknown) => c && typeof c === "object")
-      .map((c: Record<string, unknown>) => ({
-        id: String(c.id || "").slice(0, 40),
-        name: String(c.name || "").slice(0, 80),
-        description: String(c.description || "").slice(0, 200),
-        dayRate: Math.max(0, Math.round(Number(c.dayRate) || 0)),
-      }))
-      .filter((c: { id: string }) => c.id);
-  }
+    const updates: Record<string, unknown> = {};
+    if (body.registrationFields !== undefined) {
+      const rf = body.registrationFields as Record<string, unknown>;
+      if (!rf || typeof rf !== "object" || Array.isArray(rf)) return fail("registrationFields:invalid", 400);
+      const clean: Record<string, string> = {};
+      for (const [k, v] of Object.entries(rf)) {
+        if (!FIELD_KEYS.includes(k) || !isEnum(v, LEVELS)) return fail(`registrationFields:${k}`, 400);
+        clean[k] = v;
+      }
+      updates.registrationFields = clean;
+    }
+    if (body.ipRestriction !== undefined) {
+      const ipr = body.ipRestriction as Record<string, unknown>;
+      if (!ipr || typeof ipr.enabled !== "boolean") return fail("ipRestriction:invalid", 400);
+      const list = normaliseAllowList(ipr.allowedIPs ?? []);
+      if (!list) return fail("ipRestriction:invalid_address", 400);
+      if (ipr.enabled && list.length === 0) return fail("ipRestriction:empty_list", 400);
+      updates.ipRestriction = { enabled: ipr.enabled, allowedIPs: list };
+    }
+    if (body.requireApproval !== undefined) {
+      if (typeof body.requireApproval !== "boolean") return fail("requireApproval:boolean", 400);
+      updates.requireApproval = body.requireApproval;
+    }
+    if (body.businessType !== undefined) {
+      if (!isEnum(body.businessType, ["bar", "restaurant"] as const)) return fail("businessType:invalid", 400);
+      updates.businessType = body.businessType;
+    }
+    if (Object.keys(updates).length === 0) return fail("no_changes", 400);
 
-  await adminDb.collection("tv_companies").doc(company.id).update(updates);
-  return NextResponse.json({ ok: true });
+    const ref = companyRef(access.company.id);
+    await adminDb.runTransaction(async (tx) => {
+      const before = (await tx.get(ref)).data() ?? {};
+      tx.update(ref, updates);
+      writeAudit({
+        companyId: access.company.id, actorUid: access.decoded.uid, actorRole: access.role, action: "company.settings",
+        targetType: "company", targetId: access.company.id,
+        before: Object.fromEntries(Object.keys(updates).map((k) => [k, before[k] ?? null])), after: updates, requestId: requestIdOf(req),
+      }, tx);
+    });
+    return json({ ok: true, ...updates });
+  });
 }

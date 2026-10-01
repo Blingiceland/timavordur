@@ -20,13 +20,38 @@ export default function SuperAdminPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNew, setShowNew] = useState(false);
-  const [newForm, setNewForm] = useState({ name: "", slug: "", adminEmail: "", kennitala: "" });
+  const [newForm, setNewForm] = useState({ name: "", slug: "", adminEmail: "", kennitala: "", linkToSlug: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [editCompany, setEditCompany] = useState<Company | null>(null);
   const [editAdminEmail, setEditAdminEmail] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
+  const [linkTarget, setLinkTarget] = useState("");
+
+  const handleLink = async (slug: string, linkToSlug: string) => {
+    if (!superAdmin) return;
+    setEditSaving(true); setEditError("");
+    try {
+      const res = await fetch("/api/superadmin/company", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${superAdmin.token}` },
+        body: JSON.stringify({ slug, linkToSlug }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setEditError(data.error === "company_has_staff" ? "Fyrirtækið hefur þegar starfsfólk — ekki hægt að tengja." : data.error || "Villa");
+        return;
+      }
+      setCompanies((prev) => prev.map((c) => (c.slug === slug || c.slug === linkToSlug ? { ...c, groupId: data.groupId } : c)));
+      setEditCompany((prev) => (prev ? { ...prev, groupId: data.groupId } : null));
+      setLinkTarget("");
+    } catch {
+      setEditError("Netvilla — ekki vistað");
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   // Auth guard
   useEffect(() => {
@@ -140,7 +165,7 @@ export default function SuperAdminPage() {
         setError(data.error || "Villa við að vista");
       } else {
         setCompanies((prev) => [data, ...prev]);
-        setNewForm({ name: "", slug: "", adminEmail: "", kennitala: "" });
+        setNewForm({ name: "", slug: "", adminEmail: "", kennitala: "", linkToSlug: "" });
         setShowNew(false);
       }
     } catch {
@@ -280,6 +305,14 @@ export default function SuperAdminPage() {
                     onChange={(e) => setNewForm({ ...newForm, adminEmail: e.target.value })}
                     required
                   />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="new-link">Sameiginleg innskráning starfsfólks með</label>
+                  <select id="new-link" className="form-input" value={newForm.linkToSlug} onChange={(e) => setNewForm({ ...newForm, linkToSlug: e.target.value })}>
+                    <option value="">Ekkert — sér fyrirtæki</option>
+                    {companies.map((c) => <option key={c.slug} value={c.slug}>{c.name} ({c.slug})</option>)}
+                  </select>
+                  <div className="text-muted" style={{ fontSize: "0.78rem", marginTop: 3 }}>Starfsfólk sem vinnur á báðum stöðum notar sama notendanafn og PIN. Kjör, uppgjör og kennitala haldast aðskilin.</div>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Kennitala (valfrjálst)</label>
@@ -446,6 +479,21 @@ export default function SuperAdminPage() {
                 >
                   {editSaving ? "..." : "Bæta við"}
                 </button>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: "20px" }}>
+              <label className="form-label" htmlFor="edit-link" style={{ marginBottom: "6px", display: "block" }}>Sameiginleg innskráning starfsfólks</label>
+              <p className="text-muted" style={{ fontSize: "0.8rem", marginBottom: 8 }}>
+                Í hópi: {companies.filter((c) => (c.groupId || c.id) === (editCompany.groupId || editCompany.id)).map((c) => c.name).join(", ") || editCompany.name}.
+                Aðeins hægt að tengja fyrirtæki sem hefur enn ekkert starfsfólk.
+              </p>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <select id="edit-link" className="form-input" style={{ flex: 1 }} value={linkTarget} onChange={(e) => setLinkTarget(e.target.value)}>
+                  <option value="">Velja fyrirtæki…</option>
+                  {companies.filter((c) => c.slug !== editCompany.slug).map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
+                </select>
+                <button className="btn btn--primary btn--sm" disabled={editSaving || !linkTarget} onClick={() => handleLink(editCompany.slug, linkTarget)}>{editSaving ? "..." : "Tengja"}</button>
               </div>
             </div>
 

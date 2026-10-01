@@ -36,3 +36,6 @@ Thumbs.db
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Firebase emulator logs
+*-debug.log

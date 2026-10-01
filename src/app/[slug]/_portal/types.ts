@@ -1,8 +1,8 @@
 // View-model types for the company portal page (client-side shapes returned by
 // /api/[slug]/portal). Domain enums are reused from the shared lib types.
-import type { Role, Status, FieldLevel, WageCategory, BusinessType } from "@/lib/types";
+import type { Role, Status, FieldLevel, BusinessType } from "@/lib/types";
 
-export type { Role, Status, FieldLevel, WageCategory, BusinessType };
+export type { Role, Status, FieldLevel, BusinessType };
 export type Lang = "is" | "en";
 export type Tab = "clock" | "team" | "staff" | "settings" | "swaps" | "corrections";
 
@@ -65,8 +65,10 @@ export interface TeamMember {
   workPermitExpiry?: string;
   jobTitle?: string;
   employmentType?: string;
-  wageCategoryId?: string;
+  language?: "is" | "en";
   addedAt?: string;
+  /** Workplaces (company slugs in the group) the person belongs to. */
+  companies?: string[];
 }
 
 export interface PortalShift {
@@ -96,5 +98,20 @@ export interface PortalData {
   registrationFields?: Record<string, FieldLevel>;
   requireApproval?: boolean;
   businessType?: BusinessType;
-  wageCategories?: WageCategory[];
+  ipRestriction?: { enabled: boolean; allowedIPs: string[] };
+  isPinSession?: boolean;
+  periodKey?: string;
+  memberships?: Membership[];
+  groupCompanies?: { slug: string; name: string }[];
+  manageableCompanies?: string[];
+}
+
+export interface Membership {
+  slug: string;
+  name: string;
+  status: string;
+  role: Role;
+  isPunchedIn: boolean;
+  /** true/false when the workplace restricts punching by network, null otherwise */
+  onNetwork: boolean | null;
 }

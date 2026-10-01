@@ -1,5 +1,5 @@
 import { initializeApp, getApps } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, connectAuthEmulator } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -18,5 +18,10 @@ const firebaseConfig = {
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
 export const auth = getAuth(app);
+// Local testing only: NEXT_PUBLIC_AUTH_EMULATOR=127.0.0.1:9099 routes sign-in to the
+// Firebase Auth emulator. Never set in Vercel environments.
+if (process.env.NEXT_PUBLIC_AUTH_EMULATOR && typeof window !== "undefined") {
+  connectAuthEmulator(auth, `http://${process.env.NEXT_PUBLIC_AUTH_EMULATOR}`, { disableWarnings: true });
+}
 export const db = getFirestore(app);
 export const googleProvider = new GoogleAuthProvider();

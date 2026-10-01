@@ -2,11 +2,18 @@
 // Centralised here so route handlers and React pages reference one source of truth
 // instead of re-declaring these inline (and drifting out of sync).
 
-import type { BusinessType, CollectiveAgreement, PayType, WageBreakdown } from "./wage-calculator";
-import type { WageCategory } from "./wage-categories";
+import type { BusinessType } from "./payroll/engine";
+import type { PayType } from "./payroll/terms";
 
-export type { BusinessType, CollectiveAgreement, PayType, WageBreakdown };
-export type { WageCategory };
+export type { BusinessType, PayType };
+
+/** LEGACY: company-level rate templates from before dated terms (read only by the migration). */
+export interface WageCategory {
+  id: string;
+  name: string;
+  description: string;
+  dayRate: number;
+}
 
 // ── Roles & status ───────────────────────────────────────────────────────────
 export type Role = "staff" | "manager" | "admin" | "owner";
@@ -23,6 +30,8 @@ export interface IpRestriction {
 
 export interface Company {
   id: string;
+  /** Companies with the same groupId share staff logins (username + PIN). Defaults to the company id. */
+  groupId: string;
   name: string;
   slug: string;
   adminEmails: string[];
@@ -33,7 +42,8 @@ export interface Company {
   requireApproval: boolean;
   ipRestriction: IpRestriction;
   businessType?: BusinessType;          // "bar" | "restaurant" — gates the 55% night premium
-  wageCategories?: WageCategory[];      // editable launaflokkar with day rates
+  /** LEGACY, no longer used for pay — see employmentTerms. */
+  wageCategories?: WageCategory[];
   /** Only populated by the superadmin company-list endpoint. */
   staffCount?: number;
 }
@@ -61,24 +71,18 @@ export interface Staff {
   workPermitExpiry?: string;
   jobTitle?: string;
   employmentType?: string;
-  // pay
-  payType?: PayType;
+  // LEGACY pay fields (pre-2026-10). Pay now comes only from dated employmentTerms;
+  // the migration copies these into terms.legacy and never uses them for pay.
+  payType?: string;
   hourlyRate?: number;
   monthlyRate?: number;
-  collectiveAgreement?: CollectiveAgreement;
+  collectiveAgreement?: string;
+  // auth
+  authType?: "google" | "password";
+  pinVersion?: number;
 }
 
 // ── Punch records (tv_companies/{id}/punchRecords/{auto}) ────────────────────
-export interface WageData {
-  totalHours: number;
-  totalWage: number;
-  effectiveMultiplier: number;
-  breakdown: WageBreakdown;
-  wageBreakdown: WageBreakdown;
-  hourlyRate: number;
-  agreement: CollectiveAgreement;
-}
-
 export interface PunchRecord {
   uid: string;
   name: string;
@@ -86,7 +90,8 @@ export interface PunchRecord {
   type: "in" | "out";
   date: string;        // YYYY-MM-DD
   displayTime: string; // HH:MM (24h)
-  wageData?: WageData;
+  source?: "clock" | "correction";
+  idempotencyKey?: string;
 }
 
 // ── Shifts & templates ───────────────────────────────────────────────────────
@@ -110,6 +115,4 @@ export interface ShiftTemplate {
   active: boolean;
   activeFrom?: string;
   activeTo?: string;
-  hourlyRate?: number;
-  agreement?: CollectiveAgreement;
 }

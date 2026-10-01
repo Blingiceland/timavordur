@@ -2,11 +2,25 @@
 
 Fjöltenant **vaktaplönunar- og stimpilklukkukerfi** fyrir veitinga-/skemmtistaði.
 Byggt á Next.js 16 (App Router) + React 19 + Firebase (Auth + Firestore).
-Reiknar laun sjálfvirkt skv. Efling/SA kjarasamningi (dagvinna, kvöld-, helgar-,
-nætur- og stórhátíðarálag, íslenskir frídagar).
+Reiknar laun eftir þjónustusamningi SA og Eflingar (hótel og veitingahús):
+útgáfustýrðir, staðfestir taxtar, dagsett ráðningarkjör, álag, helgi- og
+stórhátíðardagar, vikuleg yfirvinna, læst uppgjör og CSV-útflutningur. Reglur og
+heimildir: `docs/RATE_SOURCES.md`. Útgáfuáætlun: `docs/RELEASE_PLAN.md`.
 
 Hvert fyrirtæki (t.d. `dillon`, `pablo`) hefur sína slóð `/[slug]` og einangruð
-gögn undir `tv_companies/{id}` í Firestore. Notendur skrá sig inn með Google.
+gögn undir `tv_companies/{id}` í Firestore. Stjórnendur skrá sig inn með Google,
+starfsfólk með notendanafni og 4 stafa PIN.
+
+Fyrirtæki með ólíkar kennitölur geta verið í sama **rekstrarhópi** (`groupId`).
+Þá gildir eftirfarandi um starfsfólk sem vinnur á fleiri en einum stað:
+
+- Það hefur eina innskráningu (`tv_groups/{groupId}`).
+- Það velur starfsstaði við nýskráningu.
+- Það er spurt hvar það er þegar það stimplar sig inn.
+
+Kjör, yfirvinna, uppgjör og útflutningur haldast aðskilin eftir fyrirtæki.
+Superadmin tengir fyrirtæki í hóp á `/superadmin`, en aðeins meðan nýja
+fyrirtækið hefur ekkert starfsfólk.
 
 ## Hlutverk
 
@@ -14,9 +28,15 @@ gögn undir `tv_companies/{id}` í Firestore. Notendur skrá sig inn með Google
 |--------------|----------|
 | `superadmin` | Stofnar/sýslar með öll fyrirtæki (`/superadmin`). |
 | `owner`      | Fullur aðgangur að einu fyrirtæki: stillingar, starfsfólk, vaktir. |
-| `admin`      | Starfsmannaumsýsla, vaktir, launayfirlit. |
-| `manager`    | Sér stöðu liðs og vaktir. |
-| `staff`      | Eigin stimpilklukka, vaktir og launayfirlit. |
+| `admin`      | Starfsmannaumsýsla (ekki owner/admin), ráðningarkjör, launavinnsla. |
+| `manager`    | Sér stöðu liðs, stýrir vaktaplani, samþykkir leiðréttingar/vaktaskipti. Sér ekki laun annarra. |
+| `staff`      | Eigin stimpilklukka, vaktir, eigin tímaskýrsla og kjör. |
+
+Aðgangur ræðst **eingöngu** af `staff.role` og `status === "approved"` innan
+fyrirtækisins. `adminEmails` er boðslisti: staðfest Google-netfang á listanum
+verður owner við fyrstu innskráningu; superadmin sem fjarlægir netfang lækkar
+hlutverkið. PIN-aðgangar (4 tölustafir) geta mest verið `manager`, eru bundnir
+fyrirtæki og ógildast við PIN-endurstillingu.
 
 ## Uppsetning (þróun)
 
@@ -62,6 +82,22 @@ Firebase Auth.
   reglunum). Birtu reglur með `firebase deploy --only firestore:rules`.
 - `service-account-key.json`, `.env*` og `*service-account*.json` eru git-hunsuð.
 
+## Prófanir
+
+| Skipun | Hvað |
+|--------|------|
+| `npm test` | Einingapróf: taxtareitir gegn birtum töflum, launavél, frídagar 2026/2027, öryggi, CSV, migration |
+| `npm run test:integration` | API-próf á Firebase-emulator (`demo-timavordur`, engin lykilorð): tenant-einangrun, hlutverk, PIN-takmörkun, samhliða stimplanir, læsing, útflutningur, migration. Krefst Java 21 |
+| `npm run check:rates` | Leitar að nýjum opinberum töflum hjá Eflingu (flaggar, breytir engu) |
+| `npm run audit:deps` | `npm audit` á framleiðsluháðum pökkum (bilar á high/critical) |
+
+Handvirk prófun í vafra með gervigögnum: ræstu emulator, keyrðu
+`FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 GCLOUD_PROJECT=demo-timavordur node scripts/emulator-seed.mjs`
+og síðan `next dev` með `FIRESTORE_EMULATOR_HOST`, `FIREBASE_AUTH_EMULATOR_HOST`,
+`GCLOUD_PROJECT=demo-timavordur`, `NEXT_PUBLIC_AUTH_EMULATOR=127.0.0.1:9099` og
+`NEXT_PUBLIC_FIREBASE_PROJECT_ID=demo-timavordur`. Í emulator-ham les
+`firebase-admin` aldrei lykla og neitar öðru en `demo-`-projecti.
+
 ## Villuvöktun
 
 Óvæntar villur í API-leiðum fara gegnum `reportApiError()`
@@ -75,6 +111,10 @@ safnið (Google Cloud Console → Firestore → TTL, svæði `expiresAt`) — á
 hennar safnast skjölin bara upp, sem er meinlaust í þessu umfangi.
 
 ## Afrit (backups)
+
+> **Athugið:** þessi lýsing er ekki staðfesting á nýlegu, endurheimtanlegu
+> afriti. Fyrir útgáfu þarf að endurheimta nýlegt afrit í einangraðan gagnagrunn
+> og skrá dagsetninguna (sjá `docs/RELEASE_PLAN.md`).
 
 Sjálfvirk Firestore-afrit eru virk á verkefninu (sett upp 3. júlí 2026 með
 firebase CLI, innskráður eigandi — service-account lykillinn hefur *ekki*
@@ -105,4 +145,6 @@ Skoða má afritin líka í Google Cloud Console → Firestore → Disaster Reco
 | `npm run build`  | Framleiðslubygging. |
 | `npm run start`  | Keyra byggingu. |
 | `npm run lint`   | ESLint. |
-| `npm run test`   | Vitest (einingapróf, m.a. launaútreikningur). |
+| `npm run test`   | Vitest einingapróf. |
+| `npm run test:integration` | API-próf á Firebase-emulator. |
+| `npm run typecheck` | TypeScript. |

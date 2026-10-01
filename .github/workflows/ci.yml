@@ -1,0 +1,54 @@
+name: CI
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 7 * * 1" # weekly: dependency audit + check for new official wage tables
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+        env:
+          # Build never needs credentials: Firebase Admin initialises lazily.
+          NEXT_PUBLIC_FIREBASE_API_KEY: ci-placeholder
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: demo-timavordur
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - run: npm ci
+      # Emulator only, demo- project, no secrets available to this job.
+      - run: npx --yes firebase-tools@15.18.0 emulators:exec --only firestore,auth --project demo-timavordur "npx vitest run --config vitest.integration.config.ts"
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run audit:deps
+
+  rate-sources:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      # Fails (exit 1) when Efling publishes a table not yet registered — a review task, never an auto-update.
+      - run: npm run check:rates

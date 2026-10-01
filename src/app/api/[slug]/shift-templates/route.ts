@@ -1,104 +1,71 @@
-import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth } from "@/lib/firebase-admin";
+import { NextRequest } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
-import { calculateWage } from "@/lib/wage-calculator";
-import { isTime, isDaysOfWeek, isDate } from "@/lib/validation";
-import { reportApiError } from "@/lib/report-error";
+import { isAccessError, staffRef, verifyCompanyRole } from "@/lib/auth";
+import { requestIdOf, writeAudit } from "@/lib/audit";
+import { accessFail, fail, handle, json } from "@/lib/server/http";
+import { templatesCol } from "@/lib/server/refs";
+import { cleanStr, isDate, isDaysOfWeek, isDocId, isTime, readJsonObject } from "@/lib/validation";
 
-async function verifyToken(req: NextRequest) {
-  const auth = req.headers.get("Authorization");
-  if (!auth?.startsWith("Bearer ")) return null;
-  try { return await adminAuth.verifyIdToken(auth.split(" ")[1]); } catch { return null; }
-}
-async function getCompany(slug: string) {
-  const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
-  if (snap.empty) return null;
-  return { id: snap.docs[0].id, ...snap.docs[0].data() } as { id: string; name: string; businessType?: "bar" | "restaurant"; wageCategories?: { id: string; dayRate: number }[] };
-}
+type Ctx = { params: Promise<{ slug: string }> };
 
-// GET /api/[slug]/shift-templates
-export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+// GET — active templates. No pay data is stored on templates any more; costs are
+// computed per dated shift by the schedule API (manager+ only).
+export async function GET(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    if (!meDoc.exists) return NextResponse.json({ error: "not_registered" }, { status: 403 });
-    const snap = await adminDb.collection("tv_companies").doc(company.id).collection("shiftTemplates")
-      .where("active", "==", true).get();
-    const templates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => String((a as Record<string,unknown>).name || "").localeCompare(String((b as Record<string,unknown>).name || "")));
-    return NextResponse.json({ templates });
-  } catch (err) { await reportApiError("shift-templates GET", err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
+  return handle("shift-templates GET", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "staff");
+    if (isAccessError(access)) return accessFail(access);
+    const snap = await templatesCol(access.company.id).where("active", "==", true).get();
+    const templates = snap.docs
+      .map((d) => {
+        const t = d.data();
+        return { id: d.id, uid: t.uid, name: t.name || "", daysOfWeek: t.daysOfWeek, startTime: t.startTime, endTime: t.endTime, label: t.label || "", active: true, activeFrom: t.activeFrom ?? null, activeTo: t.activeTo ?? null };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "is"));
+    return json({ templates });
+  });
 }
 
-// POST /api/[slug]/shift-templates — create template (manager+)
-export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+// POST — create template (manager+). endTime <= startTime means it ends the next day.
+export async function POST(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    if (!meDoc.exists || !["manager", "admin", "owner"].includes(meDoc.data()?.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  return handle("shift-templates POST", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "manager");
+    if (isAccessError(access)) return accessFail(access);
+    const body = await readJsonObject(req);
+    if (!body) return fail("invalid_body", 400);
+    const { uid, daysOfWeek, startTime, endTime, activeFrom, activeTo } = body;
+    if (!isDocId(uid) || !isDaysOfWeek(daysOfWeek) || !isTime(startTime) || !isTime(endTime)) return fail("invalid_template", 400);
+    if (startTime === endTime) return fail("zero_length_shift", 400);
+    if ((activeFrom && !isDate(activeFrom)) || (activeTo && !isDate(activeTo))) return fail("invalid_date", 400);
+    if (activeFrom && activeTo && (activeTo as string) < (activeFrom as string)) return fail("invalid_range", 400);
+    const target = await staffRef(access.company.id, uid).get();
+    if (!target.exists || target.data()!.status !== "approved") return fail("staff_not_found", 404);
 
-    const body = await req.json();
-    const { uid, daysOfWeek, startTime, endTime, label, activeFrom, activeTo } = body;
-    if (!uid || !daysOfWeek?.length || !startTime || !endTime) {
-      return NextResponse.json({ error: "uid, daysOfWeek, startTime, endTime required" }, { status: 400 });
-    }
-    if (!isDaysOfWeek(daysOfWeek) || !isTime(startTime) || !isTime(endTime)) {
-      return NextResponse.json({ error: "Ógildir vikudagar (0–6) eða tími (HH:MM)" }, { status: 400 });
-    }
-    if ((activeFrom && !isDate(activeFrom)) || (activeTo && !isDate(activeTo))) {
-      return NextResponse.json({ error: "Ógild dagsetning (YYYY-MM-DD)" }, { status: 400 });
-    }
-
-    const staffDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(uid).get();
-    const staff = staffDoc.data() || {};
-    const cat = (company.wageCategories || []).find(c => c.id === staff.wageCategoryId);
-    const hourlyRate = cat ? cat.dayRate : ((staff.hourlyRate as number) || 0);
-    const agreement = (staff.collectiveAgreement as "efling_sa" | "custom") || "efling_sa";
-
-    // Estimate wage for one typical shift (use today's date as reference)
-    const today = new Date().toISOString().slice(0, 10);
-    const startISO = `${today}T${startTime}:00Z`;
-    const endISO = endTime > startTime ? `${today}T${endTime}:00Z` : `${today}T${endTime}:00Z`;
-    const wage = calculateWage(new Date(startISO), new Date(endISO), hourlyRate, agreement, company.businessType || "bar");
-
-    const ref = await adminDb.collection("tv_companies").doc(company.id).collection("shiftTemplates").add({
-      uid, name: staff.name || "",
-      daysOfWeek, startTime, endTime,
-      label: label || "",
-      hourlyRate, agreement,
-      wageEstimate: Math.round(wage.totalWage),
-      totalHours: Math.round(wage.totalHours * 100) / 100,
-      active: true,
-      activeFrom: activeFrom || null,
-      activeTo: activeTo || null,
-      createdBy: decoded.uid,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-    return NextResponse.json({ id: ref.id });
-  } catch (err) { await reportApiError("shift-templates POST", err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
+    const doc = {
+      uid, name: target.data()!.name || "", daysOfWeek, startTime, endTime, crossesMidnight: endTime <= startTime,
+      label: cleanStr(body.label, 80), active: true, activeFrom: activeFrom || null, activeTo: activeTo || null,
+      createdBy: access.decoded.uid, createdAt: FieldValue.serverTimestamp(),
+    };
+    const ref = await templatesCol(access.company.id).add(doc);
+    await writeAudit({ companyId: access.company.id, actorUid: access.decoded.uid, actorRole: access.role, action: "template.create", targetType: "shiftTemplate", targetId: ref.id, after: doc, requestId: requestIdOf(req) });
+    return json({ id: ref.id });
+  });
 }
 
-// DELETE /api/[slug]/shift-templates — deactivate template
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+// DELETE — deactivate template (manager+)
+export async function DELETE(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const meDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    if (!meDoc.exists || !["manager", "admin", "owner"].includes(meDoc.data()?.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    const { templateId } = await req.json();
-    if (!templateId) return NextResponse.json({ error: "templateId required" }, { status: 400 });
-    await adminDb.collection("tv_companies").doc(company.id).collection("shiftTemplates").doc(templateId).update({ active: false });
-    return NextResponse.json({ ok: true });
-  } catch (err) { await reportApiError("shift-templates DELETE", err); return NextResponse.json({ error: "Server error" }, { status: 500 }); }
+  return handle("shift-templates DELETE", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "manager");
+    if (isAccessError(access)) return accessFail(access);
+    const body = await readJsonObject(req);
+    if (!body || !isDocId(body.templateId)) return fail("templateId_required", 400);
+    const ref = templatesCol(access.company.id).doc(body.templateId);
+    const snap = await ref.get();
+    if (!snap.exists) return fail("not_found", 404);
+    await ref.update({ active: false, deactivatedBy: access.decoded.uid, deactivatedAt: FieldValue.serverTimestamp() });
+    await writeAudit({ companyId: access.company.id, actorUid: access.decoded.uid, actorRole: access.role, action: "template.deactivate", targetType: "shiftTemplate", targetId: ref.id, requestId: requestIdOf(req) });
+    return json({ ok: true });
+  });
 }

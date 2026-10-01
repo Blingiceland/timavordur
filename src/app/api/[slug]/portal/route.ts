@@ -1,313 +1,398 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { randomBytes } from "crypto";
-import { adminDb, adminAuth } from "@/lib/firebase-admin";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
-import { calculateWage } from "@/lib/wage-calculator";
+import { FieldValue } from "firebase-admin/firestore";
+import { adminAuth, adminDb } from "@/lib/firebase-admin";
+import { approvedOwnerCount, effectiveRole, isAccessError, staffRef, verifyCompanyMember, verifyCompanyRole } from "@/lib/auth";
+import { requestIdOf, writeAudit } from "@/lib/audit";
+import { checkIpRestriction, getClientIp } from "@/lib/ip";
 import { hashPassword } from "@/lib/password";
-import { isUsername, isPin, cleanStr } from "@/lib/validation";
-import { reportApiError } from "@/lib/report-error";
+import { isWeakPin } from "@/lib/pin-policy";
+import { pairPunches, periodContaining } from "@/lib/payroll/punches";
+import { groupCompanies, groupUsernameRef, pinAccountRef } from "@/lib/server/group";
+import { accessFail, fail, handle, HttpError, json } from "@/lib/server/http";
+import { loadPunches } from "@/lib/server/payroll-service";
+import { recordPunch } from "@/lib/server/punch-service";
+import { companyRef, punchStateRef, staffCol } from "@/lib/server/refs";
+import { decideStaffAction, isRole, atLeast } from "@/lib/staff-policy";
+import { PROFILE_FIELDS, sanitizeProfile } from "@/lib/staff-fields";
+import type { Company, Role } from "@/lib/types";
+import { cleanStr, isDocId, isEnum, isIdempotencyKey, isPin, isUsername, readJsonObject } from "@/lib/validation";
 
-// ── Role system ────────────────────────────────────────────────────────────
-export type Role = "staff" | "manager" | "admin" | "owner";
-const ROLE_LEVEL: Record<Role, number> = { staff: 1, manager: 2, admin: 3, owner: 4 };
-const atLeast = (role: Role, min: Role) => (ROLE_LEVEL[role] || 0) >= ROLE_LEVEL[min];
+type Ctx = { params: Promise<{ slug: string }> };
 
-// Always 24h UTC
-const fmt24 = (d: Date) => `${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")}`;
-
-
-const toStr = (val: unknown): string => {
-  if (!val) return "";
-  if (typeof val === "string") return val;
-  if (val instanceof Timestamp) return val.toDate().toISOString();
-  if (typeof val === "object" && val !== null && "toDate" in val) return (val as { toDate: () => Date }).toDate().toISOString();
-  return String(val);
+const toIso = (v: unknown): string => {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  const t = v as { toDate?: () => Date };
+  return typeof t.toDate === "function" ? t.toDate().toISOString() : "";
 };
 
-async function getCompany(slug: string) {
-  const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(1).get();
-  if (snap.empty) return null;
-  const d = snap.docs[0].data();
-  return { id: snap.docs[0].id, name: d.name as string, slug: d.slug as string, adminEmails: (d.adminEmails || []) as string[], registrationFields: d.registrationFields || {}, requireApproval: d.requireApproval !== false, ipRestriction: d.ipRestriction || { enabled: false, allowedIPs: [] }, businessType: (d.businessType === "restaurant" ? "restaurant" : "bar") as "bar" | "restaurant", wageCategories: (d.wageCategories || []) as { id: string; dayRate: number }[] };
-}
+const DAY = 86_400_000;
 
-async function verifyToken(req: NextRequest) {
-  const auth = req.headers.get("Authorization");
-  if (!auth?.startsWith("Bearer ")) return null;
-  try { return await adminAuth.verifyIdToken(auth.split(" ")[1]); } catch { return null; }
-}
-
-// ── GET — fetch user status and role-appropriate data ──────────────────────
-export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
-
-    const staffRef = adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid);
-    let staffDoc = await staffRef.get();
-
-    // ── Auto-create owner if email is in adminEmails and not yet registered ──
-    if (!staffDoc.exists && company.adminEmails.includes(decoded.email || "")) {
-      await staffRef.set({
-        uid: decoded.uid, email: decoded.email || "", name: decoded.name || decoded.email || "",
-        role: "owner", status: "approved",
-        addedAt: FieldValue.serverTimestamp(), registeredSelf: false, language: "is",
-      });
-      staffDoc = await staffRef.get();
-    }
-
-    // ── Not registered ───────────────────────────────────────────────────────
-    if (!staffDoc.exists) {
-      return NextResponse.json({
-        registered: false, status: null,
-        companyName: company.name,
-        registrationFields: company.registrationFields,
-        requireApproval: company.requireApproval,
-      });
-    }
-
-    const s = staffDoc.data()!;
-    const role = (s.role || "staff") as Role;
-    const status = s.status || "approved";
-
-    if (status !== "approved") {
-      return NextResponse.json({ registered: true, status, role, name: s.name, companyName: company.name });
-    }
-
-    // ── Approved — build punch stats ─────────────────────────────────────────
-    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-    // Pay period runs the 25th → 24th. Period start is the 25th of this month if
-    // we're on/after the 25th, otherwise the 25th of last month.
-    const periodStart = new Date();
-    if (periodStart.getDate() < 25) periodStart.setMonth(periodStart.getMonth() - 1);
-    periodStart.setDate(25);
-    periodStart.setHours(0, 0, 0, 0);
-
-    const [lastPunchSnap, todaySnap, periodSnap] = await Promise.all([
-      adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").where("uid", "==", decoded.uid).orderBy("timestamp", "desc").limit(1).get(),
-      adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").where("uid", "==", decoded.uid).where("timestamp", ">=", Timestamp.fromDate(todayStart)).orderBy("timestamp", "asc").get(),
-      adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").where("uid", "==", decoded.uid).where("timestamp", ">=", Timestamp.fromDate(periodStart)).orderBy("timestamp", "asc").get(),
-    ]);
-
-    const isPunchedIn = !lastPunchSnap.empty && lastPunchSnap.docs[0].data().type === "in";
-
-    const calcHours = (docs: typeof todaySnap.docs) => {
-      let hours = 0; let shifts = 0; let lastIn: Date | null = null;
-      for (const d of docs) { const t = d.data(); const ts = t.timestamp.toDate(); if (t.type === "in") { lastIn = ts; shifts++; } else if (t.type === "out" && lastIn) { hours += (ts.getTime() - lastIn.getTime()) / 3600000; lastIn = null; } }
-      return { hours, shifts };
+/** The caller's membership at every workplace of the group (for the location choice). */
+async function memberships(group: Company[], uid: string, clientIp: string | null) {
+  return Promise.all(group.map(async (c) => {
+    const [s, st] = await Promise.all([staffRef(c.id, uid).get(), punchStateRef(c.id, uid).get()]);
+    if (!s.exists) return null;
+    return {
+      slug: c.slug, name: c.name, status: typeof s.data()!.status === "string" ? s.data()!.status : "status_missing",
+      role: effectiveRole(s.data()!), isPunchedIn: st.exists ? !!st.data()!.open : false,
+      // true/false when the workplace restricts by network; null when it does not
+      onNetwork: c.ipRestriction?.enabled ? checkIpRestriction(c.ipRestriction, clientIp).allowed : null,
     };
-    const { hours: todayHours } = calcHours(todaySnap.docs);
-    const { hours: periodHours, shifts } = calcHours(periodSnap.docs);
-
-    const base = { registered: true, status: "approved", role, name: s.name, companyName: company.name, isPunchedIn, todayHours, periodHours, shifts };
-
-    // manager+ → get team status
-    if (atLeast(role, "manager")) {
-      const staffSnap = await adminDb.collection("tv_companies").doc(company.id).collection("staff").get();
-      const team = await Promise.all(staffSnap.docs.filter(d => d.id !== decoded.uid).map(async (doc) => {
-        const m = doc.data();
-        const mStatus = m.status || "approved";
-        if (mStatus !== "approved") return { uid: doc.id, name: m.name, email: m.email, role: m.role || "staff", status: mStatus, isPunchedIn: false, todayHours: 0 };
-        const [lp, tp] = await Promise.all([
-          adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").where("uid", "==", doc.id).orderBy("timestamp", "desc").limit(1).get(),
-          adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").where("uid", "==", doc.id).where("timestamp", ">=", Timestamp.fromDate(todayStart)).orderBy("timestamp", "asc").get(),
-        ]);
-        const mIn = !lp.empty && lp.docs[0].data().type === "in";
-        const { hours: mHours } = calcHours(tp.docs);
-        return { uid: doc.id, name: m.name, email: m.email, role: m.role || "staff", status: mStatus, isPunchedIn: mIn, todayHours: mHours };
-      }));
-
-      // admin+ → full staff details + settings
-      if (atLeast(role, "admin")) {
-        const fullStaff = await Promise.all(staffSnap.docs.map(async (doc) => {
-          const m = doc.data();
-          return { uid: doc.id, name: m.name, email: m.email || "", username: m.username || "", authType: m.authType || "", role: m.role || "staff", status: m.status || "approved", ssn: m.ssn || "", phone: m.phone || "", address: m.address || "", bankName: m.bankName || "", bankAccount: m.bankAccount || "", union: m.union || "", pension: m.pension || "", workPermit: m.workPermit ?? null, workPermitExpiry: m.workPermitExpiry || "", jobTitle: m.jobTitle || "", employmentType: m.employmentType || "", payType: m.payType || "hourly", hourlyRate: m.hourlyRate || 0, monthlyRate: m.monthlyRate || 0, collectiveAgreement: m.collectiveAgreement || "efling_sa", wageCategoryId: m.wageCategoryId || "", language: m.language || "is", addedAt: toStr(m.addedAt || m.registeredAt) };
-        }));
-        return NextResponse.json({ ...base, team, staffList: fullStaff, registrationFields: company.registrationFields, requireApproval: company.requireApproval, ipRestriction: company.ipRestriction, businessType: company.businessType, wageCategories: company.wageCategories });
-      }
-
-      return NextResponse.json({ ...base, team });
-    }
-
-    return NextResponse.json(base);
-  } catch (err) {
-    await reportApiError("portal GET", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+  })).then((x) => x.filter((m): m is NonNullable<typeof m> => m !== null));
 }
 
-// ── POST — punch in/out ────────────────────────────────────────────────────
-export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
+// ── GET — status and role-appropriate data ───────────────────────────────────
+export async function GET(req: NextRequest, { params }: Ctx) {
   const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return handle("portal GET", { slug }, async () => {
+    const m = await verifyCompanyMember(req, slug);
+    if (isAccessError(m)) return accessFail(m);
+    const { decoded, company } = m;
+    let staff = m.staff;
 
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    const staffDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    if (!staffDoc.exists) return NextResponse.json({ error: "not_registered" }, { status: 403 });
-    const s = staffDoc.data()!;
-    if ((s.status || "approved") !== "approved") return NextResponse.json({ error: s.status }, { status: 403 });
-
-    // IP restriction check
-    if (company.ipRestriction?.enabled && company.ipRestriction.allowedIPs?.length > 0) {
-      const clientIP = req.headers.get("x-forwarded-for")?.split(",")[0].trim() || req.headers.get("x-real-ip") || "";
-      const allowed = company.ipRestriction.allowedIPs.some((ip: string) => clientIP.startsWith(ip.split("/")[0].split(".").slice(0, 3).join(".")));
-      if (!allowed) return NextResponse.json({ error: "ip_restricted", clientIP }, { status: 403 });
+    // Owner invite: an address on company.adminEmails becomes the owner on its
+    // first verified Google sign-in. After that, authority lives only in staff.role.
+    if (!staff) {
+      const email = (decoded.email || "").toLowerCase();
+      const invited =
+        !!email && decoded.email_verified === true && decoded.firebase?.sign_in_provider === "google.com" && !decoded.tv_pin &&
+        company.adminEmails.some((e) => e.toLowerCase() === email);
+      if (invited) {
+        const ref = staffRef(company.id, decoded.uid);
+        await adminDb.runTransaction(async (tx) => {
+          if ((await tx.get(ref)).exists) return;
+          const doc = {
+            uid: decoded.uid, email, name: decoded.name || email, role: "owner", status: "approved",
+            addedAt: FieldValue.serverTimestamp(), registeredSelf: false, language: "is", authType: "google",
+          };
+          tx.set(ref, doc);
+          writeAudit({ companyId: company.id, actorUid: decoded.uid, actorRole: "owner", action: "staff.owner_invite_claimed", targetType: "staff", targetId: decoded.uid, after: doc, requestId: requestIdOf(req) }, tx);
+        });
+        const snap = await ref.get();
+        staff = { ...snap.data(), uid: snap.id };
+      }
     }
 
-    const lastSnap = await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").where("uid", "==", decoded.uid).orderBy("timestamp", "desc").limit(1).get();
-    const isPunchedIn = !lastSnap.empty && lastSnap.docs[0].data().type === "in";
-    const newType = isPunchedIn ? "out" : "in";
-    const now = new Date();
-    const newRecordData: Record<string, unknown> = {
-      uid: decoded.uid, name: s.name || decoded.name || decoded.email || "Unknown",
-      email: decoded.email || "", type: newType, timestamp: FieldValue.serverTimestamp(),
-      date: now.toISOString().slice(0, 10),
-      displayTime: fmt24(now),
+    const group = await groupCompanies(company.groupId);
+    const clientIp = getClientIp(req.headers);
+    const mine = await memberships(group, decoded.uid, clientIp);
+    const groupList = group.map((c) => ({ slug: c.slug, name: c.name }));
+
+    if (!staff) {
+      return json({
+        registered: false, status: null, companyName: company.name, registrationFields: company.registrationFields,
+        requireApproval: company.requireApproval, groupCompanies: groupList, memberships: mine, isPinSession: !!decoded.tv_pin,
+      });
+    }
+    const role = effectiveRole(staff);
+    const status = typeof staff.status === "string" ? staff.status : "status_missing";
+    if (status !== "approved") return json({ registered: true, status, role, name: staff.name, companyName: company.name, memberships: mine, groupCompanies: groupList });
+
+    const now = Date.now();
+    const period = periodContaining(now);
+    const todayStart = Math.floor(now / DAY) * DAY;
+    const punches = await loadPunches(company.id, period.start - DAY, now + 60_000);
+    const hoursIn = (uid: string, from: number) => {
+      const res = pairPunches(punches.get(uid) ?? [], now);
+      let ms = 0; let shifts = 0;
+      for (const s of res.shifts) {
+        const a = Math.max(s.start, from); const b = Math.min(s.end, now);
+        if (b > a) { ms += b - a; if (s.start >= from) shifts++; }
+      }
+      return { hours: ms / 3_600_000, shifts };
     };
+    const here = mine.find((x) => x.slug === company.slug);
+    const today = hoursIn(decoded.uid, todayStart);
+    const per = hoursIn(decoded.uid, period.start);
+    const base = {
+      registered: true, status: "approved", role, name: staff.name, companyName: company.name, isPinSession: !!decoded.tv_pin,
+      isPunchedIn: here?.isPunchedIn ?? false, todayHours: today.hours, periodHours: per.hours, shifts: per.shifts, periodKey: period.key,
+      memberships: mine, groupCompanies: groupList,
+    };
+    if (!atLeast(role, "manager")) return json(base);
 
-    // On punch-out: calculate wage breakdown for this shift
-    if (newType === "out" && !lastSnap.empty) {
-      const lastInData = lastSnap.docs[0].data();
-      const punchInTime = lastInData.timestamp?.toDate?.() as Date | undefined;
-      if (punchInTime) {
-        const cat = company.wageCategories.find(c => c.id === s.wageCategoryId);
-        const hourlyRate = cat ? cat.dayRate : (s.hourlyRate || 0);
-        const agreement = (s.collectiveAgreement || "efling_sa") as "efling_sa" | "custom";
-        const wage = calculateWage(punchInTime, now, hourlyRate, agreement, company.businessType);
-        newRecordData.wageData = {
-          totalHours: wage.totalHours,
-          totalWage: wage.totalWage,
-          effectiveMultiplier: Math.round(wage.effectiveMultiplier * 100) / 100,
-          breakdown: wage.breakdown,
-          wageBreakdown: wage.wageBreakdown,
-          hourlyRate,
-          agreement,
-        };
-      }
-    }
-
-    await adminDb.collection("tv_companies").doc(company.id).collection("punchRecords").add(newRecordData);
-
-    return NextResponse.json({ type: newType, time: fmt24(now) });
-  } catch (err) {
-    await reportApiError("portal POST", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
-}
-
-// ── PATCH — role management (owner only) + staff approve/reject/update/delete ──
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    const myDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    const myRole = (myDoc.data()?.role || "staff") as Role;
-
-    if (!atLeast(myRole, "admin")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-    const { uid, action, updates, role } = await req.json();
-    if (!uid) return NextResponse.json({ error: "uid vantar" }, { status: 400 });
-
-    const targetRef = adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(uid);
-
-    if (action === "set-role") {
-      if (!atLeast(myRole, "owner")) return NextResponse.json({ error: "Aðeins owner getur sett hlutverkaréttindi" }, { status: 403 });
-      if (!["staff", "manager", "admin", "owner"].includes(role)) return NextResponse.json({ error: "Ógilt hlutverk" }, { status: 400 });
-      await targetRef.update({ role, updatedAt: new Date().toISOString(), updatedBy: decoded.email });
-      return NextResponse.json({ ok: true, role });
-    }
-    if (action === "approve") { await targetRef.update({ status: "approved", approvedAt: new Date().toISOString(), approvedBy: decoded.email }); return NextResponse.json({ ok: true }); }
-    if (action === "reject") { await targetRef.update({ status: "rejected", rejectedAt: new Date().toISOString(), rejectedBy: decoded.email }); return NextResponse.json({ ok: true }); }
-    if (action === "update" && updates) {
-      const safe: Record<string, unknown> = { ...updates };
-      // Password reset (never store plaintext)
-      if (typeof safe.password === "string" && safe.password.length > 0) {
-        if (!isPin(safe.password)) return NextResponse.json({ error: "PIN verður að vera 4 tölustafir" }, { status: 400 });
-        const { hash, salt } = hashPassword(safe.password);
-        safe.passwordHash = hash; safe.passwordSalt = salt; safe.authType = "password";
-      }
-      delete safe.password;
-      // Username change (validate + unique within company)
-      if (safe.username !== undefined) {
-        const uname = String(safe.username).trim().toLowerCase();
-        if (!isUsername(uname)) return NextResponse.json({ error: "Ógilt notendanafn" }, { status: 400 });
-        const dup = await adminDb.collection("tv_companies").doc(company.id).collection("staff").where("username", "==", uname).limit(1).get();
-        if (!dup.empty && dup.docs[0].id !== uid) return NextResponse.json({ error: "Notendanafn er þegar í notkun" }, { status: 409 });
-        safe.username = uname;
-      }
-      await targetRef.update({ ...safe, updatedAt: new Date().toISOString() });
-      return NextResponse.json({ ok: true });
-    }
-    if (action === "delete") { await targetRef.delete(); return NextResponse.json({ ok: true }); }
-
-    return NextResponse.json({ error: "Óþekkt aðgerð" }, { status: 400 });
-  } catch (err) {
-    await reportApiError("portal PATCH", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
-}
-
-// ── PUT — manually add staff (admin+) ─────────────────────────────────────
-export async function PUT(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
-  const decoded = await verifyToken(req);
-  if (!decoded) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  try {
-    const company = await getCompany(slug);
-    if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    const myDoc = await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(decoded.uid).get();
-    if (!atLeast((myDoc.data()?.role || "staff") as Role, "admin")) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-
-    const body = await req.json();
-    const username = typeof body.username === "string" ? body.username.trim().toLowerCase() : "";
-    const password = typeof body.password === "string" ? body.password : "";
-    if (!isUsername(username)) return NextResponse.json({ error: "Ógilt notendanafn (3–30 stafir: a–z, 0–9, . _ -)" }, { status: 400 });
-    if (!isPin(password)) return NextResponse.json({ error: "PIN verður að vera 4 tölustafir" }, { status: 400 });
-
-    // Username must be unique within the company
-    const dup = await adminDb.collection("tv_companies").doc(company.id).collection("staff").where("username", "==", username).limit(1).get();
-    if (!dup.empty) return NextResponse.json({ error: "Notendanafn er þegar í notkun" }, { status: 409 });
-
-    const staffRole: Role = body.role && ["staff", "manager", "admin", "owner"].includes(body.role) ? body.role : "staff";
-    const { hash, salt } = hashPassword(password);
-    const uid = "pw_" + randomBytes(12).toString("hex");
-    const num = (v: unknown) => (typeof v === "number" ? v : parseInt(String(v)) || 0);
-
-    await adminDb.collection("tv_companies").doc(company.id).collection("staff").doc(uid).set({
-      uid, username, authType: "password", passwordHash: hash, passwordSalt: salt,
-      name: cleanStr(body.name) || username,
-      role: staffRole, status: "approved",
-      ssn: cleanStr(body.ssn, 11), phone: cleanStr(body.phone, 30), address: cleanStr(body.address),
-      bankName: cleanStr(body.bankName, 80), bankAccount: cleanStr(body.bankAccount, 30),
-      union: cleanStr(body.union, 80), pension: cleanStr(body.pension, 80),
-      workPermit: typeof body.workPermit === "boolean" ? body.workPermit : null,
-      workPermitExpiry: cleanStr(body.workPermitExpiry, 20),
-      jobTitle: cleanStr(body.jobTitle, 80), employmentType: cleanStr(body.employmentType, 40),
-      payType: body.payType || "hourly",
-      hourlyRate: num(body.hourlyRate), monthlyRate: num(body.monthlyRate),
-      collectiveAgreement: body.collectiveAgreement || "efling_sa",
-      wageCategoryId: cleanStr(body.wageCategoryId, 40),
-      addedAt: FieldValue.serverTimestamp(), addedBy: decoded.email || decoded.uid, registeredSelf: false, language: "is",
+    const [staffSnap, statesSnap] = await Promise.all([staffCol(company.id).get(), companyRef(company.id).collection("punchState").get()]);
+    const openByUid = new Map(statesSnap.docs.map((d) => [d.id, !!d.data().open]));
+    const team = staffSnap.docs.filter((d) => d.id !== decoded.uid).map((d) => {
+      const s = d.data();
+      const st = typeof s.status === "string" ? s.status : "status_missing";
+      return {
+        uid: d.id, name: s.name, email: s.email || "", role: effectiveRole(s), status: st,
+        isPunchedIn: st === "approved" ? openByUid.get(d.id) ?? false : false,
+        todayHours: st === "approved" ? hoursIn(d.id, todayStart).hours : 0,
+      };
     });
+    if (!atLeast(role, "admin")) return json({ ...base, team });
 
-    return NextResponse.json({ ok: true, uid });
-  } catch (err) {
-    await reportApiError("portal PUT", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+    // Which workplaces each person belongs to, and where the caller may manage staff.
+    const otherSnaps = await Promise.all(group.map((c) => (c.id === company.id ? Promise.resolve(staffSnap) : staffCol(c.id).get())));
+    const companiesByUid = new Map<string, string[]>();
+    group.forEach((c, i) => otherSnaps[i].docs.forEach((d) => companiesByUid.set(d.id, [...(companiesByUid.get(d.id) ?? []), c.slug])));
+    const manageable = group.filter((c, i) => {
+      const me = otherSnaps[i].docs.find((d) => d.id === decoded.uid)?.data();
+      return !!me && me.status === "approved" && atLeast(effectiveRole(me), "admin");
+    }).map((c) => c.slug);
+
+    const staffList = staffSnap.docs.map((d) => {
+      const s = d.data();
+      return {
+        uid: d.id, name: s.name, email: s.email || "", username: s.username || "", authType: s.authType || "",
+        role: isRole(s.role) ? s.role : "staff", status: typeof s.status === "string" ? s.status : "status_missing",
+        ssn: s.ssn || "", phone: s.phone || "", address: s.address || "", bankName: s.bankName || "", bankAccount: s.bankAccount || "",
+        union: s.union || "", pension: s.pension || "", workPermit: s.workPermit ?? null, workPermitExpiry: s.workPermitExpiry || "",
+        jobTitle: s.jobTitle || "", employmentType: s.employmentType || "", language: s.language || "is",
+        addedAt: toIso(s.addedAt || s.registeredAt), companies: companiesByUid.get(d.id) ?? [company.slug],
+      };
+    });
+    return json({
+      ...base, team, staffList, manageableCompanies: manageable, registrationFields: company.registrationFields,
+      requireApproval: company.requireApproval, ipRestriction: company.ipRestriction, businessType: company.businessType,
+    });
+  });
+}
+
+// ── POST — punch in/out at THIS workplace (the single punch path) ─────────────
+export async function POST(req: NextRequest, { params }: Ctx) {
+  const { slug } = await params;
+  return handle("portal POST", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "staff");
+    if (isAccessError(access)) return accessFail(access);
+    const { company, decoded, staff } = access;
+    const body = await readJsonObject(req);
+    if (!body || !isEnum(body.action, ["in", "out"] as const)) return fail("action_required", 400);
+    if (!isIdempotencyKey(body.idempotencyKey)) return fail("idempotency_key_required", 400);
+
+    const clientIp = getClientIp(req.headers);
+    const ipCheck = checkIpRestriction(company.ipRestriction, clientIp);
+    if (!ipCheck.allowed) return fail(ipCheck.reason, 403);
+
+    const group = await groupCompanies(company.groupId);
+    const result = await recordPunch({
+      companyId: company.id, uid: decoded.uid, name: staff.name || decoded.name || "", email: staff.email || decoded.email || "",
+      action: body.action, idempotencyKey: body.idempotencyKey, clientIp,
+      otherCompanyIds: group.map((c) => c.id).filter((id) => id !== company.id),
+    });
+    return json({ ...result, companySlug: company.slug, companyName: company.name });
+  });
+}
+
+/** Copy profile fields of an existing membership into a new workplace. */
+const profileOf = (s: FirebaseFirestore.DocumentData) =>
+  Object.fromEntries(PROFILE_FIELDS.filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
+
+// ── PATCH — staff management (admin+, owner for protected roles) ──────────────
+export async function PATCH(req: NextRequest, { params }: Ctx) {
+  const { slug } = await params;
+  return handle("portal PATCH", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "admin");
+    if (isAccessError(access)) return accessFail(access);
+    const { company, decoded, role: myRole } = access;
+    const body = await readJsonObject(req);
+    if (!body) return fail("invalid_body", 400);
+    const { uid, action } = body;
+    if (!isDocId(uid)) return fail("uid_required", 400);
+    const actions = ["approve", "reject", "update", "reset-pin", "set-role", "delete", "set-companies"] as const;
+    if (!isEnum(action, actions)) return fail("unknown_action", 400);
+    const requestId = requestIdOf(req);
+    const ref = staffRef(company.id, uid);
+    const g = company.groupId;
+
+    if (action === "set-companies") return setCompanies(req, company, decoded.uid, uid, body.companies, requestId);
+
+    // Validate payloads before the transaction.
+    let profile: Record<string, unknown> | null = null;
+    let newUsername: string | null = null;
+    if (action === "update") {
+      const updates = body.updates;
+      if (!updates || typeof updates !== "object" || Array.isArray(updates)) return fail("updates_required", 400);
+      const u = { ...(updates as Record<string, unknown>) };
+      if (u.username !== undefined) {
+        newUsername = typeof u.username === "string" ? u.username.trim().toLowerCase() : "";
+        delete u.username;
+        if (newUsername === "") newUsername = null;
+        else if (!isUsername(newUsername)) return fail("invalid_username", 400);
+      }
+      const p = sanitizeProfile(u);
+      if (!p.ok) return fail(p.error, 400);
+      profile = p.value;
+    }
+    if (action === "reset-pin") {
+      if (!isPin(body.pin)) return fail("pin_must_be_4_digits", 400);
+      if (isWeakPin(body.pin)) return fail("pin_too_simple", 400);
+    }
+    if (action === "set-role" && !isRole(body.role)) return fail("invalid_role", 400);
+
+    const group = action === "delete" ? await groupCompanies(g) : [];
+    let revoke = false;
+    const result = await adminDb.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new HttpError(404, "not_found");
+      const target = snap.data()!;
+      const owners = await approvedOwnerCount(company.id, tx);
+      const policyAction = action === "reset-pin" ? "reset_pin" : action === "set-role" ? "set_role" : action;
+      const decision = decideStaffAction({ uid: decoded.uid, role: myRole }, policyAction, {
+        uid, role: isRole(target.role) ? target.role : "staff", status: String(target.status ?? ""), authType: target.authType,
+      }, { newRole: body.role as Role | undefined, approvedOwnerCount: owners });
+      if (!decision.ok) throw new HttpError(decision.status, decision.error);
+
+      const isPinPerson = target.authType === "password" || uid.startsWith("pw_");
+      const acctRef = pinAccountRef(g, uid);
+      const acct = isPinPerson ? await tx.get(acctRef) : null;
+
+      let unameRef: FirebaseFirestore.DocumentReference | null = null;
+      if (newUsername && newUsername !== target.username) {
+        unameRef = groupUsernameRef(g, newUsername);
+        if ((await tx.get(unameRef)).exists) throw new HttpError(409, "username_taken");
+      }
+      // Other memberships (for deletion: keep the shared account if any remain).
+      const others = action === "delete"
+        ? (await Promise.all(group.filter((c) => c.id !== company.id).map((c) => tx.get(staffRef(c.id, uid))))).filter((d) => d.exists)
+        : [];
+
+      const now = new Date().toISOString();
+      let changes: Record<string, unknown> = {};
+      switch (action) {
+        case "approve": changes = { status: "approved", approvedAt: now, approvedBy: decoded.uid }; break;
+        case "reject": changes = { status: "rejected", rejectedAt: now, rejectedBy: decoded.uid }; break;
+        case "set-role": changes = { role: body.role, roleChangedAt: now, roleChangedBy: decoded.uid }; break;
+        case "update": changes = { ...profile, ...(newUsername ? { username: newUsername } : {}), updatedAt: now, updatedBy: decoded.uid }; break;
+        case "reset-pin": {
+          if (!acct?.exists) throw new HttpError(400, "not_pin_account");
+          const { hash, salt } = hashPassword(body.pin as string);
+          tx.update(acctRef, { passwordHash: hash, passwordSalt: salt, pinVersion: (acct.data()!.pinVersion ?? 0) + 1, pinResetAt: now, pinResetBy: decoded.uid });
+          changes = { pinResetAt: now, pinResetBy: decoded.uid };
+          revoke = true;
+          break;
+        }
+        case "delete": break;
+      }
+      if (action === "delete") {
+        tx.delete(ref);
+        if (others.length === 0 && acct?.exists) {
+          // Last workplace: remove the shared login as well.
+          tx.delete(acctRef);
+          if (acct.data()!.username) tx.delete(groupUsernameRef(g, acct.data()!.username));
+          revoke = true;
+        }
+      } else {
+        tx.update(ref, changes);
+        if (unameRef) {
+          tx.set(unameRef, { uid });
+          if (target.username) tx.delete(groupUsernameRef(g, target.username));
+          if (acct?.exists) tx.update(acctRef, { username: newUsername });
+        }
+      }
+      writeAudit({
+        companyId: company.id, actorUid: decoded.uid, actorRole: myRole, action: `staff.${action}`, targetType: "staff", targetId: uid,
+        reason: cleanStr(body.reason, 300), before: target, after: action === "delete" ? null : { ...target, ...changes }, requestId,
+      }, tx);
+      return { ok: true, status: changes.status, role: changes.role };
+    });
+    if (revoke && uid.startsWith("pw_")) await adminAuth.revokeRefreshTokens(uid).catch(() => undefined);
+    return json(result);
+  });
+}
+
+/**
+ * Set the workplaces (companies in the group) a person belongs to. The caller
+ * must be admin+ in every company where membership is added or removed.
+ */
+async function setCompanies(req: NextRequest, company: Company, actorUid: string, uid: string, wanted: unknown, requestId: string) {
+  if (!Array.isArray(wanted) || wanted.length === 0 || !wanted.every((s) => typeof s === "string")) return fail("companies_required", 400);
+  const group = await groupCompanies(company.groupId);
+  if (!wanted.every((s) => group.some((c) => c.slug === s))) return fail("invalid_companies", 400);
+
+  await adminDb.runTransaction(async (tx) => {
+    const targetDocs = await Promise.all(group.map((c) => tx.get(staffRef(c.id, uid))));
+    const actorDocs = await Promise.all(group.map((c) => tx.get(staffRef(c.id, actorUid))));
+    const ownerCounts = await Promise.all(group.map((c) => approvedOwnerCount(c.id, tx)));
+    const source = targetDocs.find((d) => d.exists)?.data();
+    if (!targetDocs[group.findIndex((c) => c.id === company.id)]?.exists || !source) throw new HttpError(404, "not_found");
+
+    const ops: (() => void)[] = [];
+    group.forEach((c, i) => {
+      const isIn = targetDocs[i].exists;
+      const shouldBe = (wanted as string[]).includes(c.slug);
+      if (isIn === shouldBe) return;
+      const me = actorDocs[i].data();
+      if (!me || me.status !== "approved" || !atLeast(effectiveRole(me), "admin")) throw new HttpError(403, "not_admin_in_company", { company: c.slug });
+      if (shouldBe) {
+        const doc = {
+          ...profileOf(source), uid, name: source.name, username: source.username ?? null, authType: source.authType ?? null,
+          email: source.email ?? "", role: "staff", status: "approved", registeredSelf: false,
+          addedAt: FieldValue.serverTimestamp(), addedBy: actorUid,
+        };
+        ops.push(() => {
+          tx.set(staffRef(c.id, uid), doc);
+          writeAudit({ companyId: c.id, actorUid, actorRole: effectiveRole(me), action: "staff.add_workplace", targetType: "staff", targetId: uid, after: doc, requestId }, tx);
+        });
+      } else {
+        const t = targetDocs[i].data()!;
+        const d = decideStaffAction({ uid: actorUid, role: effectiveRole(me) }, "delete",
+          { uid, role: isRole(t.role) ? t.role : "staff", status: String(t.status ?? ""), authType: t.authType }, { approvedOwnerCount: ownerCounts[i] });
+        if (!d.ok) throw new HttpError(d.status, d.error, { company: c.slug });
+        ops.push(() => {
+          tx.delete(staffRef(c.id, uid));
+          writeAudit({ companyId: c.id, actorUid, actorRole: effectiveRole(me), action: "staff.remove_workplace", targetType: "staff", targetId: uid, before: t, requestId }, tx);
+        });
+      }
+    });
+    ops.forEach((op) => op());
+  });
+  return json({ ok: true, companies: wanted });
+}
+
+// ── PUT — create a username/PIN account (admin+) ─────────────────────────────
+export async function PUT(req: NextRequest, { params }: Ctx) {
+  const { slug } = await params;
+  return handle("portal PUT", { slug }, async () => {
+    const access = await verifyCompanyRole(req, slug, "admin");
+    if (isAccessError(access)) return accessFail(access);
+    const { company, decoded, role: myRole } = access;
+    const body = await readJsonObject(req);
+    if (!body) return fail("invalid_body", 400);
+    const { username: rawU, password, role: rawRole, companies: rawCompanies, ...rest } = body;
+    const username = typeof rawU === "string" ? rawU.trim().toLowerCase() : "";
+    if (!isUsername(username)) return fail("invalid_username", 400);
+    if (!isPin(password)) return fail("pin_must_be_4_digits", 400);
+    if (isWeakPin(password)) return fail("pin_too_simple", 400);
+    const newRole: Role = rawRole === undefined ? "staff" : isRole(rawRole) ? rawRole : ("__invalid" as Role);
+    if (!isRole(newRole)) return fail("invalid_role", 400);
+    const p = sanitizeProfile(rest);
+    if (!p.ok) return fail(p.error, 400);
+    const decision = decideStaffAction({ uid: decoded.uid, role: myRole }, "create", null, { newRole, approvedOwnerCount: 0, newIsPin: true });
+    if (!decision.ok) return fail(decision.error, decision.status);
+
+    const group = await groupCompanies(company.groupId);
+    const slugs = Array.isArray(rawCompanies) && rawCompanies.length ? rawCompanies : [slug];
+    const targets = group.filter((c) => (slugs as unknown[]).includes(c.slug));
+    if (targets.length !== new Set(slugs).size) return fail("invalid_companies", 400);
+
+    const uid = "pw_" + randomBytes(12).toString("hex");
+    const { hash, salt } = hashPassword(password);
+    const g = company.groupId;
+    const name = (p.value.name as string) || username;
+    await adminDb.runTransaction(async (tx) => {
+      const unameRef = groupUsernameRef(g, username);
+      if ((await tx.get(unameRef)).exists) throw new HttpError(409, "username_taken");
+      const mine = await Promise.all(targets.map((c) => tx.get(staffRef(c.id, decoded.uid))));
+      targets.forEach((c, i) => {
+        const me = mine[i].data();
+        if (!me || me.status !== "approved" || !atLeast(effectiveRole(me), "admin")) throw new HttpError(403, "not_admin_in_company", { company: c.slug });
+      });
+      tx.set(pinAccountRef(g, uid), { uid, username, name, passwordHash: hash, passwordSalt: salt, pinVersion: 0, createdAt: FieldValue.serverTimestamp() });
+      tx.set(unameRef, { uid });
+      for (const c of targets) {
+        const doc = {
+          ...p.value, name, uid, username, authType: "password", role: newRole, status: "approved", registeredSelf: false,
+          language: p.value.language ?? "is", addedAt: FieldValue.serverTimestamp(), addedBy: decoded.uid,
+        };
+        tx.set(staffRef(c.id, uid), doc);
+        writeAudit({ companyId: c.id, actorUid: decoded.uid, actorRole: myRole, action: "staff.create", targetType: "staff", targetId: uid, after: doc, requestId: requestIdOf(req) }, tx);
+      }
+    });
+    return json({ ok: true, uid });
+  });
 }
