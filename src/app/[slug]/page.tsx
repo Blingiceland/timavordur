@@ -41,7 +41,10 @@ export default function CompanyPortal() {
   const [loginError, setLoginError] = useState("");
   // Self sign-up (choose own username + PIN)
   const [signupMode, setSignupMode] = useState(false);
-  const [signupForm, setSignupForm] = useState({ name: "", username: "", pin: "" });
+  const [signupForm, setSignupForm] = useState({ name: "", username: "", email: "" });
+  const [signupDone, setSignupDone] = useState<{ email: string; pinEmailed: boolean; approved: boolean } | null>(null);
+  // A PIN shown once to the admin when the e-mail could not be delivered.
+  const [pinNotice, setPinNotice] = useState<{ name: string; pin?: string; email?: string | null; emailed: boolean; reason?: string } | null>(null);
   // Workplaces in this company group (e.g. Dillon + Pablo) and the ones chosen at sign-up.
   const [groupList, setGroupList] = useState<{ slug: string; name: string }[]>([]);
   const [chosenCompanies, setChosenCompanies] = useState<string[]>([]);
@@ -113,7 +116,8 @@ export default function CompanyPortal() {
       });
       const d = await res.json();
       if (!res.ok) { setLoginError(errText(d.error, lang || "is", d.retryAfter) || (lang === "en" ? "Sign-up failed" : "Skráning mistókst")); return; }
-      await signInWithCustomToken(auth, d.token); // portal shows pending or clock
+      setSignupDone({ email: signupForm.email, pinEmailed: !!d.pinEmailed, approved: Object.values(d.statuses || {}).includes("approved") });
+      setSignupForm({ name: "", username: "", email: "" });
     } catch { setLoginError(lang === "en" ? "Network error" : "Netvilla"); }
     finally { setLoggingIn(false); }
   };
@@ -230,17 +234,25 @@ export default function CompanyPortal() {
     } finally { setPunching(false); }
   };
 
-  const doPortalAction = async (method: string, body: object, successMsg: string) => {
-    if (!user) return false;
+  const doPortalAction = async (method: string, body: object, successMsg: string): Promise<Record<string, unknown> | null> => {
+    if (!user) return null;
     setSaving(true);
     try {
       const token = await user.getIdToken();
       const res = await fetch(`/api/${slug}/portal`, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
       const d = await res.json();
-      if (res.ok) { if (successMsg) showMsg(successMsg); await fetchPortal(); setEditMember(null); setShowAdd(false); return true; }
-      else { showMsg(errText(d.error, lang || "is") || (lang === "en" ? "Error" : "Villa"), false); return false; }
-    } catch { showMsg(lang === "en" ? "Network error" : "Netvillla", false); return false; }
+      if (res.ok) { if (successMsg) showMsg(successMsg); await fetchPortal(); setEditMember(null); setShowAdd(false); return d as Record<string, unknown>; }
+      else { showMsg(errText(d.error, lang || "is") || (lang === "en" ? "Error" : "Villa"), false); return null; }
+    } catch { showMsg(lang === "en" ? "Network error" : "Netvillla", false); return null; }
     finally { setSaving(false); }
+  };
+
+  // Approve / send PIN / create: report how the PIN was delivered.
+  const pinAction = async (method: string, body: object, name: string) => {
+    const d = await doPortalAction(method, body, "");
+    if (!d) return;
+    if (d.pinEmailed === undefined) { showMsg(lang === "is" ? "✅ Samþykkt" : "✅ Approved"); return; }
+    setPinNotice({ name, pin: d.pin as string | undefined, email: d.pinEmail as string | null, emailed: !!d.pinEmailed, reason: d.pinReason as string | undefined });
   };
 
   const doSwapAction = async (id: string, action: string) => {
@@ -418,12 +430,23 @@ export default function CompanyPortal() {
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
             <div style={{ fontSize: "3rem", marginBottom: "8px" }}>⏱</div>
             <h2 style={{ fontSize: "1.4rem" }}>{portal?.companyName || "Tímavörður"}</h2>
-            <p className="text-secondary" style={{ fontSize: "0.9rem", marginTop: "4px" }}>{signupMode ? (lang === "is" ? "Nýskráning — veldu notendanafn og PIN" : "Sign up — choose a username and PIN") : (lang === "is" ? "Skráðu þig inn til að halda áfram" : "Sign in to continue")}</p>
+            <p className="text-secondary" style={{ fontSize: "0.9rem", marginTop: "4px" }}>{signupMode ? (lang === "is" ? "Nýskráning — PIN kemur í pósti eftir samþykki" : "Sign up — your PIN arrives by e-mail after approval") : (lang === "is" ? "Skráðu þig inn til að halda áfram" : "Sign in to continue")}</p>
           </div>
 
           {loginError && <div style={{ background: "rgba(255,77,106,0.1)", border: "1px solid rgba(255,77,106,0.3)", borderRadius: "var(--radius-md)", padding: "10px 14px", color: "var(--danger)", marginBottom: "14px", fontSize: "0.85rem" }}>⚠️ {loginError}</div>}
 
-          {signupMode ? (
+          {signupDone ? (
+            <div role="status" style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: "2.4rem" }}>📬</div>
+              <div style={{ fontWeight: 600 }}>{lang === "is" ? "Takk fyrir skráninguna!" : "Thanks for signing up!"}</div>
+              <div className="text-secondary" style={{ fontSize: "0.9rem" }}>
+                {signupDone.approved && signupDone.pinEmailed
+                  ? (lang === "is" ? `PIN-ið þitt hefur verið sent á ${signupDone.email}.` : `Your PIN has been sent to ${signupDone.email}.`)
+                  : (lang === "is" ? `Þegar stjórnandi samþykkir skráninguna færðu PIN sent á ${signupDone.email}. Svo skráir þú þig inn með notendanafni og PIN.` : `Once an admin approves you, your PIN will be sent to ${signupDone.email}. Then sign in with your username and PIN.`)}
+              </div>
+              <button className="btn btn--secondary" onClick={() => { setSignupDone(null); setSignupMode(false); }}>{lang === "is" ? "Til baka í innskráningu" : "Back to sign-in"}</button>
+            </div>
+          ) : signupMode ? (
             <form onSubmit={doSignup} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
               <div className="form-group">
                 <label className="form-label">{lang === "is" ? "Nafn" : "Name"}</label>
@@ -434,8 +457,8 @@ export default function CompanyPortal() {
                 <input className="form-input" autoCapitalize="none" autoCorrect="off" placeholder={lang === "is" ? "t.d. anna" : "e.g. anna"} value={signupForm.username} onChange={e => setSignupForm(f => ({ ...f, username: e.target.value.toLowerCase() }))} required />
               </div>
               <div className="form-group">
-                <label className="form-label">{lang === "is" ? "Veldu PIN (4 tölustafir)" : "Choose a PIN (4 digits)"}</label>
-                <input type="password" autoComplete="new-password" inputMode="numeric" maxLength={4} className="form-input" placeholder="••••" value={signupForm.pin} onChange={e => setSignupForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, "") }))} required />
+                <label className="form-label" htmlFor="su-email">{lang === "is" ? "Netfang — PIN verður sent hingað" : "E-mail — your PIN will be sent here"}</label>
+                <input id="su-email" type="email" autoComplete="email" className="form-input" placeholder="nafn@dæmi.is" value={signupForm.email} onChange={e => setSignupForm(f => ({ ...f, email: e.target.value.trim() }))} required />
               </div>
               {groupList.length > 1 && <WorkplacePicker />}
               <button type="submit" className="btn btn--primary" style={{ width: "100%", justifyContent: "center", padding: "12px", fontSize: "1rem" }} disabled={loggingIn || chosenCompanies.length === 0}>{loggingIn ? "..." : (lang === "is" ? "Skrá mig" : "Sign up")}</button>
@@ -491,6 +514,19 @@ export default function CompanyPortal() {
             {portal.memberships!.map(m => <a key={m.slug} className="btn btn--primary" href={`/${m.slug}`}>{m.name}</a>)}
           </div>
           <p className="text-muted" style={{ fontSize: "0.8rem", marginTop: 14 }}>{lang === "is" ? "Stjórnandi getur bætt þessum stað við hjá þér." : "An admin can add this workplace for you."}</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ─── Google account that is not a manager here: staff use username + PIN ───
+  if (portal && !portal.registered && !portal.isPinSession) return (
+    <div className="page" style={{ minHeight: "100vh" }}><Navbar />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "calc(100vh - 64px)" }}>
+        <div className="card" style={{ maxWidth: 420, width: "100%", padding: 40, textAlign: "center" }}>
+          <h2 style={{ fontSize: "1.15rem" }}>{lang === "is" ? "Google-innskráning er fyrir stjórnendur" : "Google sign-in is for managers"}</h2>
+          <p className="text-secondary" style={{ fontSize: "0.9rem" }}>{lang === "is" ? "Starfsfólk skráir sig inn með notendanafni og PIN. Nýskráning: skráðu þig út og veldu „Nýr starfsmaður? Skráðu þig“." : "Staff sign in with a username and PIN. To register, sign out and choose “New here? Sign up”."}</p>
+          <button className="btn btn--primary" onClick={() => signOut(auth)}>{t.signOut}</button>
         </div>
       </div>
     </div>
@@ -624,6 +660,20 @@ export default function CompanyPortal() {
       <div className="container" style={{ padding: "32px 24px" }}>
         {/* Message */}
         {msg && <div style={{ background: msg.ok ? "var(--accent-glow)" : "rgba(255,77,106,0.1)", border: `1px solid ${msg.ok ? "rgba(0,212,170,0.3)" : "rgba(255,77,106,0.3)"}`, borderRadius: "var(--radius-md)", padding: "12px 16px", color: msg.ok ? "var(--accent)" : "var(--danger)", marginBottom: "16px", fontSize: "0.9rem" }}>{msg.text}</div>}
+
+        {pinNotice && (
+          <div role="alert" className="card" style={{ marginBottom: 16, padding: "16px 20px", border: `1px solid ${pinNotice.emailed ? "rgba(0,212,170,0.4)" : "#f0a500"}` }}>
+            {pinNotice.emailed ? (
+              <div>✅ {lang === "is" ? `${pinNotice.name}: PIN sent á ${pinNotice.email}.` : `${pinNotice.name}: PIN sent to ${pinNotice.email}.`}</div>
+            ) : (
+              <div>
+                <div style={{ fontWeight: 600 }}>⚠️ {lang === "is" ? `Ekki tókst að senda póst til ${pinNotice.name}` : `Could not e-mail ${pinNotice.name}`}{pinNotice.reason === "no_email" ? (lang === "is" ? " (ekkert netfang skráð)" : " (no e-mail on file)") : pinNotice.reason === "not_configured" ? (lang === "is" ? " (póstþjónusta ekki uppsett)" : " (mail not configured)") : ""}.</div>
+                <div style={{ marginTop: 6 }}>{lang === "is" ? "Afhentu starfsmanninum þetta PIN. Það birtist aðeins núna:" : "Hand this PIN to the employee. It is shown only now:"} <b style={{ fontSize: "1.4rem", letterSpacing: 4, fontFamily: "monospace" }}>{pinNotice.pin}</b></div>
+              </div>
+            )}
+            <button className="btn btn--ghost btn--sm" style={{ marginTop: 8 }} onClick={() => setPinNotice(null)}>{lang === "is" ? "Loka" : "Close"}</button>
+          </div>
+        )}
 
         {/* Registration link (admin+) */}
         {canManage && (
@@ -963,7 +1013,7 @@ export default function CompanyPortal() {
                         <td>
                           <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                             {s.status === "pending" && <>
-                              <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => doPortalAction("PATCH", { uid: s.uid, action: "approve" }, "✅ Samþykkt!")} disabled={saving}>{t.approve}</button>
+                              <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => pinAction("PATCH", { uid: s.uid, action: "approve" }, s.name)} disabled={saving}>{t.approve}</button>
                               <button className="btn btn--sm" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} onClick={() => doPortalAction("PATCH", { uid: s.uid, action: "reject" }, "Hafnað")} disabled={saving}>{t.reject}</button>
                             </>}
                             <button className="btn btn--secondary btn--sm" onClick={() => { setEditMember(s); setEditForm({ ...s }); setEditCompanies(s.companies || [slug]); }}>{t.edit}</button>
@@ -1096,6 +1146,11 @@ export default function CompanyPortal() {
                 if (editCompanies.length && [...editCompanies].sort().join(",") !== before && !(await doPortalAction("PATCH", { uid: editMember.uid, action: "set-companies", companies: editCompanies }, ""))) return;
                 showMsg(lang === "is" ? "✅ Vistað" : "✅ Saved");
               }}>{saving ? t.saving : t.save}</button>
+              {editMember.authType === "password" && editMember.status === "approved" && (
+                <button className="btn btn--secondary btn--sm" disabled={saving} onClick={() => { const m = editMember; pinAction("PATCH", { uid: m.uid, action: "send-pin" }, m.name); }}>
+                  {lang === "is" ? "Senda nýtt PIN" : "Send new PIN"}
+                </button>
+              )}
               <button className="btn btn--sm" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} disabled={saving} onClick={() => { if (confirm(lang === "is" ? `Eyða ${editMember.name}? Stimplanir og launasaga varðveitast.` : `Delete ${editMember.name}? Punches and payroll history are kept.`)) doPortalAction("PATCH", { uid: editMember.uid, action: "delete" }, lang === "is" ? "Eytt" : "Deleted"); }}>{t.delete}</button>
             </div>
           </div>
@@ -1116,8 +1171,8 @@ export default function CompanyPortal() {
                 <input className="form-input" autoCapitalize="none" placeholder={lang === "is" ? "t.d. anna" : "e.g. anna"} value={addForm.username || ""} onChange={e => setAddForm(f => ({ ...f, username: e.target.value.toLowerCase() }))} required />
               </div>
               <div className="form-group" style={{ flex: 1 }}>
-                <label className="form-label">PIN *</label>
-                <input type="text" inputMode="numeric" maxLength={4} className="form-input" placeholder={lang === "is" ? "4 tölustafir" : "4 digits"} value={addForm.password || ""} onChange={e => setAddForm(f => ({ ...f, password: e.target.value.replace(/\D/g, "") }))} required />
+                <label className="form-label">PIN</label>
+                <input type="text" inputMode="numeric" maxLength={4} className="form-input" placeholder={lang === "is" ? "tómt = sent í pósti" : "blank = sent by e-mail"} value={addForm.password || ""} onChange={e => setAddForm(f => ({ ...f, password: e.target.value.replace(/\D/g, "") }))} />
               </div>
             </div>
             <StaffFormFields form={addForm} onChange={setAddForm} lang={lang} isOwner={isOwner} pinAccount />
@@ -1132,7 +1187,7 @@ export default function CompanyPortal() {
                 ))}
               </fieldset>
             )}
-            <button className="btn btn--primary" style={{ width: "100%", justifyContent: "center", marginTop: "16px" }} disabled={saving} onClick={() => doPortalAction("PUT", { ...profilePayload(addForm, false), username: addForm.username, password: addForm.password, role: addForm.role || "staff", companies: editCompanies.length ? editCompanies : [slug] }, lang === "is" ? "✅ Starfsmanni bætt við" : "✅ Staff member added")}>{saving ? t.saving : lang === "is" ? "Bæta við" : "Add"}</button>
+            <button className="btn btn--primary" style={{ width: "100%", justifyContent: "center", marginTop: "16px" }} disabled={saving} onClick={() => pinAction("PUT", { ...profilePayload(addForm, false), ...(addForm.email ? { email: addForm.email } : {}), username: addForm.username, ...(addForm.password ? { password: addForm.password } : {}), role: addForm.role || "staff", companies: editCompanies.length ? editCompanies : [slug] }, addForm.name || addForm.username || "")}>{saving ? t.saving : lang === "is" ? "Bæta við" : "Add"}</button>
           </div>
         </div>
       )}
