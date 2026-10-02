@@ -87,7 +87,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         requireApproval: company.requireApproval, groupCompanies: groupList, memberships: mine, isPinSession: !!decoded.tv_pin,
       });
     }
-    const role = effectiveRole(staff);
+    const role = effectiveRole(staff, !!decoded.tv_pin);
     const status = typeof staff.status === "string" ? staff.status : "status_missing";
     if (status !== "approved") return json({ registered: true, status, role, name: staff.name, companyName: company.name, memberships: mine, groupCompanies: groupList });
 
@@ -318,7 +318,7 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
     // First approval of a PIN person who has no PIN yet → generate and e-mail it.
     let pinResult: PinIssueResult | null = null;
-    if (action === "approve" && uid.startsWith("pw_")) {
+    if (action === "approve") {
       const acct = await pinAccountRef(g, uid).get();
       if (acct.exists && !acct.data()!.passwordHash) {
         pinResult = await issuePin({

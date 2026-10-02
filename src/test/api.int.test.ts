@@ -41,6 +41,13 @@ async function pinAccount(slug: string, companyId: string, username: string, pin
   return { uid, token: await exchangeCustomToken(r.body.token as string) };
 }
 
+/** New staff register with their Google account (the only self-registration). */
+async function googleRegister(slug: string, email: string, body: Record<string, unknown>) {
+  const g = await googleUser(email);
+  const res = await call(register.POST, { slug, method: "POST", token: g.token, body });
+  return { ...g, res };
+}
+
 /** The last PIN e-mailed to an address (emulator test mailbox). */
 async function mailedPin(to: string) {
   const snap = await adminDb.collection("tv_test_mail").where("to", "==", to).get();
@@ -168,17 +175,42 @@ describe("PIN login", () => {
     expect(r.status).toBe(401);
     expect(r.body.error).toBe("session_revoked");
   });
-  it("signup is always staff + pending and usernames are unique under concurrency", async () => {
-    const rs = await Promise.all([1, 2, 3].map(() => call(signup.POST, { slug: "alpha", method: "POST", body: { username: "sama", email: "sama@x.is", name: "Sama", role: "owner" } })));
-    expect(rs.filter((r) => r.status === 200)).toHaveLength(1);
+  it("sign-up without Google is gone", async () => {
+    const r = await call(signup.POST, { slug: "alpha", method: "POST", body: { username: "sama", email: "sama@x.is", name: "Sama" } });
+    expect(r.status).toBe(410);
+    expect(r.body.error).toBe("google_signup_required");
+  });
+  it("registration is always staff + pending and usernames are unique under concurrency", async () => {
+    const rs = await Promise.all([1, 2, 3].map((i) => googleRegister("alpha", `sama${i}@x.is`, { username: "sama", name: "Sama" })));
+    expect(rs.filter((r) => r.res.status === 200)).toHaveLength(1);
+    expect(rs.filter((r) => r.res.status === 409).every((r) => r.res.body.error === "username_taken")).toBe(true);
     const docs = await adminDb.collection("tv_companies").doc(A).collection("staff").where("username", "==", "sama").get();
     expect(docs.size).toBe(1);
     expect(docs.docs[0].data()).toMatchObject({ role: "staff", status: "pending" });
   });
   it("Google self-registration cannot set role or status", async () => {
     const g = await googleUser("reg@a.is");
-    const r = await call(register.POST, { slug: "alpha", method: "POST", token: g.token, body: { name: "Reg", role: "owner" } });
+    const r = await call(register.POST, { slug: "alpha", method: "POST", token: g.token, body: { username: "reg", name: "Reg", role: "owner" } });
     expect(r.status).toBe(400);
+    const noUser = await call(register.POST, { slug: "alpha", method: "POST", token: g.token, body: { name: "Reg" } });
+    expect(noUser.body.error).toBe("invalid_username");
+  });
+  it("only a Google account can register; a PIN session cannot", async () => {
+    const pin = await pinAccount("alpha", A, "pinni");
+    await adminDb.doc(`tv_companies/${A}/staff/${pin.uid}`).delete();
+    const r = await call(register.POST, { slug: "alpha", method: "POST", token: pin.token, body: { username: "pinni2", name: "P" } });
+    expect(r.status).toBeGreaterThanOrEqual(400);
+  });
+  it("a Google owner signing in with their PIN is capped at manager", async () => {
+    const { hashPassword } = await import("@/lib/password");
+    const { hash, salt } = hashPassword("4826");
+    await adminDb.doc(`tv_groups/${A}/pinAccounts/${owner.uid}`).set({ uid: owner.uid, username: "adminpin", name: "A", passwordHash: hash, passwordSalt: salt, pinVersion: 0 });
+    await adminDb.doc(`tv_groups/${A}/usernames/adminpin`).set({ uid: owner.uid });
+    const l = await call(login.POST, { slug: "alpha", method: "POST", body: { username: "adminpin", password: "4826" } });
+    expect(l.status).toBe(200);
+    const token = await exchangeCustomToken(l.body.token as string);
+    expect((await call(settings.PATCH, { slug: "alpha", method: "PATCH", token, body: { businessType: "restaurant" } })).status).toBe(403);
+    expect((await call(settings.PATCH, { slug: "alpha", method: "PATCH", token: owner.token, body: { businessType: "restaurant" } })).status).toBe(200);
   });
 });
 
@@ -354,22 +386,22 @@ describe("two workplaces with separate kennitala sharing logins (Dillon + Pablo)
   });
 
   it("sign-up for both workplaces creates one login and a membership at each", async () => {
-    const r = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "lara", email: "lara@x.is", name: "Lára", companies: ["dillon", "pablo"] } });
+    const { res: r, uid: gUid } = await googleRegister("dillon", "lara@x.is", { username: "lara", name: "Lára", companies: ["dillon", "pablo"] });
     expect(r.status).toBe(200);
     expect(r.body.statuses).toEqual({ dillon: "pending", pablo: "approved" });
     expect(r.body.pinEmailed).toBe(true); // Pablo needs no approval → PIN sent at once
     expect(r.body.token).toBeUndefined();
     const uid = (await adminDb.doc(`tv_groups/${G}/usernames/lara`).get()).data()!.uid;
-    expect((await adminDb.doc(`tv_companies/${D}/staff/${uid}`).get()).data()).toMatchObject({ status: "pending", role: "staff" });
+    expect(uid).toBe(gUid);
+    expect((await adminDb.doc(`tv_companies/${D}/staff/${uid}`).get()).data()).toMatchObject({ status: "pending", role: "staff", authType: "google", email: "lara@x.is" });
     expect((await adminDb.doc(`tv_companies/${Pb}/staff/${uid}`).get()).exists).toBe(true);
     expect((await adminDb.doc(`tv_companies/${D}/staff/${uid}`).get()).data()!.passwordHash).toBeUndefined();
-    const bad = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "xxx2", email: "x2@x.is", name: "X", companies: ["alpha"] } });
-    expect(bad.body.error).toBe("invalid_companies"); // a company outside the group
-    expect((await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "xxx3", name: "X" } })).body.error).toBe("invalid_email");
+    const bad = await googleRegister("dillon", "x2@x.is", { username: "xxx2", name: "X", companies: ["alpha"] });
+    expect(bad.res.body.error).toBe("invalid_companies"); // a company outside the group
   });
 
   it("one login works at both; punching in at one blocks the other; the portal shows where", async () => {
-    await call(signup.POST, { slug: "pablo", method: "POST", body: { username: "lara", email: "lara@x.is", name: "Lára", companies: ["dillon", "pablo"] } });
+    await googleRegister("pablo", "lara@x.is", { username: "lara", name: "Lára", companies: ["dillon", "pablo"] });
     const uid = (await adminDb.doc(`tv_groups/${G}/usernames/lara`).get()).data()!.uid as string;
     const { pin } = await mailedPin("lara@x.is");
     // Approval at Dillon does NOT issue a second PIN (she already has one).
@@ -436,7 +468,7 @@ describe("PIN by e-mail on approval", () => {
     await seedCompany("d1", "dillon", { groupId: "g1" });
     const boss = await googleUser("boss@x.is");
     await seedStaff("d1", boss.uid, { role: "owner", authType: "google" });
-    const s = await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "nonni", email: "Nonni@X.is", name: "Nonni" } });
+    const { res: s } = await googleRegister("dillon", "Nonni@X.is", { username: "nonni", name: "Nonni" });
     expect(s.body).toMatchObject({ status: "pending", pinEmailed: false });
     expect((await call(login.POST, { slug: "dillon", method: "POST", body: { username: "nonni", password: "4826" } })).status).toBe(401);
     const uid = (await adminDb.doc("tv_groups/g1/usernames/nonni").get()).data()!.uid;
@@ -454,7 +486,7 @@ describe("PIN by e-mail on approval", () => {
     await seedCompany("d1", "dillon", { groupId: "g1" });
     const boss = await googleUser("boss@x.is");
     await seedStaff("d1", boss.uid, { role: "owner", authType: "google" });
-    await call(signup.POST, { slug: "dillon", method: "POST", body: { username: "gunna", email: "gunna@x.is", name: "Gunna" } });
+    await googleRegister("dillon", "gunna@x.is", { username: "gunna", name: "Gunna" });
     const uid = (await adminDb.doc("tv_groups/g1/usernames/gunna").get()).data()!.uid;
     process.env.MAIL_TEST_FAIL = "1";
     try {

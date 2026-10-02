@@ -41,9 +41,6 @@ export default function CompanyPortal() {
   const [loggingIn, setLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState("");
   // Self sign-up (choose own username + PIN)
-  const [signupMode, setSignupMode] = useState(false);
-  const [signupForm, setSignupForm] = useState({ name: "", username: "", email: "" });
-  const [signupDone, setSignupDone] = useState<{ email: string; pinEmailed: boolean; approved: boolean } | null>(null);
   // A PIN shown once to the admin when the e-mail could not be delivered.
   const [pinNotice, setPinNotice] = useState<{ name: string; pin?: string; email?: string | null; emailed: boolean; reason?: string } | null>(null);
   // Workplaces in this company group (e.g. Dillon + Pablo) and the ones chosen at sign-up.
@@ -103,24 +100,6 @@ export default function CompanyPortal() {
       const d = await res.json();
       if (!res.ok) { setLoginError(errText(d.error, lang || "is", d.retryAfter) || (lang === "en" ? "Login failed" : "Innskráning mistókst")); return; }
       await signInWithCustomToken(auth, d.token); // onAuthStateChanged → fetchPortal
-    } catch { setLoginError(lang === "en" ? "Network error" : "Netvilla"); }
-    finally { setLoggingIn(false); }
-  };
-
-  const doSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoggingIn(true);
-    setLoginError("");
-    try {
-      const res = await fetch(`/api/${slug}/staff/signup`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...signupForm, companies: chosenCompanies.length ? chosenCompanies : [slug] }),
-      });
-      const d = await res.json();
-      if (!res.ok) { setLoginError(errText(d.error, lang || "is", d.retryAfter) || (lang === "en" ? "Sign-up failed" : "Skráning mistókst")); return; }
-      setSignupDone({ email: signupForm.email, pinEmailed: !!d.pinEmailed, approved: Object.values(d.statuses || {}).includes("approved") });
-      setSignupForm({ name: "", username: "", email: "" });
     } catch { setLoginError(lang === "en" ? "Network error" : "Netvilla"); }
     finally { setLoggingIn(false); }
   };
@@ -475,62 +454,28 @@ export default function CompanyPortal() {
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
             <div style={{ fontSize: "3rem", marginBottom: "8px" }}>⏱</div>
             <h2 style={{ fontSize: "1.4rem" }}>{portal?.companyName || "Tímavörður"}</h2>
-            <p className="text-secondary" style={{ fontSize: "0.9rem", marginTop: "4px" }}>{signupMode ? (lang === "is" ? "Nýskráning — PIN kemur í pósti eftir samþykki" : "Sign up — your PIN arrives by e-mail after approval") : (lang === "is" ? "Skráðu þig inn til að halda áfram" : "Sign in to continue")}</p>
+            <p className="text-secondary" style={{ fontSize: "0.9rem", marginTop: "4px" }}>{lang === "is" ? "Skráðu þig inn með notendanafni og PIN" : "Sign in with your username and PIN"}</p>
           </div>
 
           {loginError && <div style={{ background: "rgba(255,77,106,0.1)", border: "1px solid rgba(255,77,106,0.3)", borderRadius: "var(--radius-md)", padding: "10px 14px", color: "var(--danger)", marginBottom: "14px", fontSize: "0.85rem" }}>⚠️ {loginError}</div>}
 
-          {signupDone ? (
-            <div role="status" style={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ fontSize: "2.4rem" }}>📬</div>
-              <div style={{ fontWeight: 600 }}>{lang === "is" ? "Takk fyrir skráninguna!" : "Thanks for signing up!"}</div>
-              <div className="text-secondary" style={{ fontSize: "0.9rem" }}>
-                {signupDone.approved && signupDone.pinEmailed
-                  ? (lang === "is" ? `PIN-ið þitt hefur verið sent á ${signupDone.email}.` : `Your PIN has been sent to ${signupDone.email}.`)
-                  : (lang === "is" ? `Þegar stjórnandi samþykkir skráninguna færðu PIN sent á ${signupDone.email}. Svo skráir þú þig inn með notendanafni og PIN.` : `Once an admin approves you, your PIN will be sent to ${signupDone.email}. Then sign in with your username and PIN.`)}
-              </div>
-              <button className="btn btn--secondary" onClick={() => { setSignupDone(null); setSignupMode(false); }}>{lang === "is" ? "Til baka í innskráningu" : "Back to sign-in"}</button>
+          <form onSubmit={doStaffLogin} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div className="form-group">
+              <label className="form-label" htmlFor="li-user">{lang === "is" ? "Notendanafn" : "Username"}</label>
+              <input id="li-user" className="form-input" autoCapitalize="none" autoCorrect="off" autoComplete="username" placeholder={lang === "is" ? "notendanafn" : "username"} value={loginForm.username} onChange={e => setLoginForm(f => ({ ...f, username: e.target.value }))} required />
             </div>
-          ) : signupMode ? (
-            <form onSubmit={doSignup} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div className="form-group">
-                <label className="form-label">{lang === "is" ? "Nafn" : "Name"}</label>
-                <input className="form-input" placeholder={lang === "is" ? "Fullt nafn" : "Full name"} value={signupForm.name} onChange={e => setSignupForm(f => ({ ...f, name: e.target.value }))} required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">{lang === "is" ? "Notendanafn" : "Username"}</label>
-                <input className="form-input" autoCapitalize="none" autoCorrect="off" placeholder={lang === "is" ? "t.d. anna" : "e.g. anna"} value={signupForm.username} onChange={e => setSignupForm(f => ({ ...f, username: e.target.value.toLowerCase() }))} required />
-              </div>
-              <div className="form-group">
-                <label className="form-label" htmlFor="su-email">{lang === "is" ? "Netfang — PIN verður sent hingað" : "E-mail — your PIN will be sent here"}</label>
-                <input id="su-email" type="email" autoComplete="email" className="form-input" placeholder="nafn@dæmi.is" value={signupForm.email} onChange={e => setSignupForm(f => ({ ...f, email: e.target.value.trim() }))} required />
-              </div>
-              {groupList.length > 1 && <WorkplacePicker />}
-              <button type="submit" className="btn btn--primary" style={{ width: "100%", justifyContent: "center", padding: "12px", fontSize: "1rem" }} disabled={loggingIn || chosenCompanies.length === 0}>{loggingIn ? "..." : (lang === "is" ? "Skrá mig" : "Sign up")}</button>
-            </form>
-          ) : (
-            <form onSubmit={doStaffLogin} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <div className="form-group">
-                <label className="form-label">{lang === "is" ? "Notendanafn" : "Username"}</label>
-                <input className="form-input" autoCapitalize="none" autoCorrect="off" autoComplete="username" placeholder={lang === "is" ? "notendanafn" : "username"} value={loginForm.username} onChange={e => setLoginForm(f => ({ ...f, username: e.target.value }))} required />
-              </div>
-              <div className="form-group">
-                <label className="form-label">PIN</label>
-                <input type="password" autoComplete="current-password" inputMode="numeric" maxLength={4} className="form-input" placeholder="••••" value={loginForm.password} onChange={e => setLoginForm(f => ({ ...f, password: e.target.value.replace(/\D/g, "") }))} required />
-              </div>
-              <button type="submit" className="btn btn--primary" style={{ width: "100%", justifyContent: "center", padding: "12px", fontSize: "1rem" }} disabled={loggingIn}>{loggingIn ? "..." : (lang === "is" ? "Skrá inn" : "Sign in")}</button>
-            </form>
-          )}
+            <div className="form-group">
+              <label className="form-label" htmlFor="li-pin">PIN</label>
+              <input id="li-pin" type="password" autoComplete="current-password" inputMode="numeric" maxLength={4} className="form-input" placeholder="••••" value={loginForm.password} onChange={e => setLoginForm(f => ({ ...f, password: e.target.value.replace(/\D/g, "") }))} required />
+            </div>
+            <button type="submit" className="btn btn--primary" style={{ width: "100%", justifyContent: "center", padding: "12px", fontSize: "1rem" }} disabled={loggingIn}>{loggingIn ? "..." : (lang === "is" ? "Skrá inn" : "Sign in")}</button>
+          </form>
 
-          <button onClick={() => { setSignupMode(m => !m); setLoginError(""); }} className="btn btn--ghost btn--sm" style={{ width: "100%", justifyContent: "center", marginTop: 10 }}>
-            {signupMode ? (lang === "is" ? "← Áttu aðgang? Skrá inn" : "← Have an account? Sign in") : (lang === "is" ? "Nýr starfsmaður? Skráðu þig" : "New here? Sign up")}
-          </button>
-
-          {!signupMode && (
+          {(
             <>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", margin: "16px 0 14px" }}>
                 <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-                <span className="text-muted" style={{ fontSize: "0.75rem" }}>{lang === "is" ? "Stjórnandi?" : "Admin?"}</span>
+                <span className="text-muted" style={{ fontSize: "0.75rem" }}>{lang === "is" ? "Nýr starfsmaður eða stjórnandi?" : "New staff member or manager?"}</span>
                 <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
               </div>
               <button onClick={() => {
@@ -539,8 +484,11 @@ export default function CompanyPortal() {
                 else { signInWithPopup(auth, googleProvider); }
               }} className="btn btn--secondary" style={{ width: "100%", justifyContent: "center", gap: "10px" }}>
                 <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-                {lang === "is" ? "Skrá inn með Google" : "Sign in with Google"}
+                {lang === "is" ? "Nýskrá / skrá inn með Google" : "Sign up / sign in with Google"}
               </button>
+              <p className="text-muted" style={{ fontSize: "0.78rem", marginTop: 10, textAlign: "center" }}>
+                {lang === "is" ? "Nýir starfsmenn skrá sig með Google. Þegar stjórnandi samþykkir færðu PIN í pósti." : "New staff register with Google. When approved, you get a PIN by e-mail."}
+              </p>
             </>
           )}
         </div>
@@ -564,19 +512,6 @@ export default function CompanyPortal() {
     </div>
   );
 
-  // ─── Google account that is not a manager here: staff use username + PIN ───
-  if (portal && !portal.registered && !portal.isPinSession) return (
-    <div className="page" style={{ minHeight: "100vh" }}><Navbar />
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "calc(100vh - 64px)" }}>
-        <div className="card" style={{ maxWidth: 420, width: "100%", padding: 40, textAlign: "center" }}>
-          <h2 style={{ fontSize: "1.15rem" }}>{lang === "is" ? "Google-innskráning er fyrir stjórnendur" : "Google sign-in is for managers"}</h2>
-          <p className="text-secondary" style={{ fontSize: "0.9rem" }}>{lang === "is" ? "Starfsfólk skráir sig inn með notendanafni og PIN. Nýskráning: skráðu þig út og veldu „Nýr starfsmaður? Skráðu þig“." : "Staff sign in with a username and PIN. To register, sign out and choose “New here? Sign up”."}</p>
-          <button className="btn btn--primary" onClick={() => signOut(auth)}>{t.signOut}</button>
-        </div>
-      </div>
-    </div>
-  );
-
   // ─── Not registered ────────────────────────────────────────────────────────
   if (portal && !portal.registered) {
     const rf = portal.registrationFields || REG_FIELDS_DEFAULTS;
@@ -589,6 +524,11 @@ export default function CompanyPortal() {
           <div className="card card--brand" style={{ marginBottom: "24px" }}><h1 style={{ fontSize: "1.3rem" }}>{t.regTitle}</h1></div>
           {msg && <div style={{ background: msg.ok ? "var(--accent-glow)" : "rgba(255,77,106,0.1)", border: `1px solid ${msg.ok ? "rgba(0,212,170,0.3)" : "rgba(255,77,106,0.3)"}`, borderRadius: "var(--radius-md)", padding: "12px 16px", color: msg.ok ? "var(--accent)" : "var(--danger)", marginBottom: "16px" }}>{msg.text}</div>}
           <form onSubmit={doRegister} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            <div className="form-group">
+              <label className="form-label" htmlFor="reg-username">{lang === "is" ? "Notendanafn (til að stimpla með PIN)" : "Username (for clocking in with a PIN)"} <span style={{ color: "var(--danger)", fontSize: "0.78rem" }}>* {t.required}</span></label>
+              <input id="reg-username" className="form-input" autoCapitalize="none" autoCorrect="off" placeholder={lang === "is" ? "t.d. anna" : "e.g. anna"} value={regForm.username || ""} onChange={e => setRegForm(v => ({ ...v, username: e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, "") }))} required minLength={3} maxLength={30} />
+              <div className="text-muted" style={{ fontSize: "0.78rem", marginTop: 3 }}>{lang === "is" ? `PIN verður sent á ${user.email} þegar stjórnandi samþykkir.` : `Your PIN will be sent to ${user.email} once approved.`}</div>
+            </div>
             {ALL_REG_FIELDS.filter(f => show(f.key)).map(f => (
               <div key={f.key} className="form-group">
                 <label className="form-label">{lang === "en" ? f.en : f.is} {isReq(f.key) && <span style={{ color: "var(--danger)", fontSize: "0.78rem" }}>* {t.required}</span>}</label>
@@ -634,6 +574,7 @@ export default function CompanyPortal() {
             <div style={{ fontSize: "3.5rem", marginBottom: "16px" }}>{isPending ? "⏳" : "❌"}</div>
             <h2 style={{ fontSize: "1.3rem", marginBottom: "8px" }}>{isPending ? t.pending : t.rejected}</h2>
             <p className="text-secondary" style={{ marginBottom: "24px" }}>{isPending ? t.pendingMsg : t.rejectedMsg}</p>
+            {isPending && <p className="text-muted" style={{ fontSize: "0.85rem", marginTop: -12, marginBottom: 20 }}>{lang === "is" ? "Þú færð PIN í pósti þegar skráningin er samþykkt." : "You will get a PIN by e-mail when approved."}</p>}
             <button className="btn btn--ghost btn--sm" onClick={() => signOut(auth)}>{t.signOut}</button>
           </div>
         </div>
@@ -1198,7 +1139,7 @@ export default function CompanyPortal() {
                 if (editCompanies.length && [...editCompanies].sort().join(",") !== before && !(await doPortalAction("PATCH", { uid: editMember.uid, action: "set-companies", companies: editCompanies }, ""))) return;
                 showMsg(lang === "is" ? "✅ Vistað" : "✅ Saved");
               }}>{saving ? t.saving : t.save}</button>
-              {editMember.authType === "password" && editMember.status === "approved" && (
+              {!!editMember.username && editMember.status === "approved" && (
                 <button className="btn btn--secondary btn--sm" disabled={saving} onClick={() => { const m = editMember; pinAction("PATCH", { uid: m.uid, action: "send-pin" }, m.name); }}>
                   {lang === "is" ? "Senda nýtt PIN" : "Send new PIN"}
                 </button>

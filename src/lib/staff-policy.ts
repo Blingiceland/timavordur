@@ -69,8 +69,7 @@ export function decideStaffAction(
       if (target.uid === actor.uid && action === "reject") return deny(400, "cannot_reject_self");
       return { ok: true };
     case "reset_pin":
-      if (target.authType !== "password" && !target.uid.startsWith("pw_")) return deny(400, "not_pin_account");
-      return { ok: true };
+      return { ok: true }; // whether a PIN login exists is checked when the PIN is issued
     case "approve":
     case "update":
       return { ok: true };

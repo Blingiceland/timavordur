@@ -102,9 +102,9 @@ export function pinSessionError(
   return null;
 }
 
-export function effectiveRole(staff: FirebaseFirestore.DocumentData): Role {
+export function effectiveRole(staff: FirebaseFirestore.DocumentData, pinSession = false): Role {
   const role: Role = isRole(staff.role) ? staff.role : "staff";
-  if (staff.authType === "password" && ROLE_LEVEL[role] > ROLE_LEVEL[MAX_PIN_ROLE]) return MAX_PIN_ROLE;
+  if ((pinSession || staff.authType === "password") && ROLE_LEVEL[role] > ROLE_LEVEL[MAX_PIN_ROLE]) return MAX_PIN_ROLE;
   return role;
 }
 
@@ -150,7 +150,7 @@ export async function verifyCompanyRole(req: NextRequest, slug: string, minRole:
   if (!m.staff) return { error: "not_registered", status: 403 };
   const status = m.staff.status;
   if (status !== "approved") return { error: typeof status === "string" ? status : "status_missing", status: 403 };
-  const role = effectiveRole(m.staff);
+  const role = effectiveRole(m.staff, !!m.decoded.tv_pin);
   if (!atLeast(role, minRole)) return { error: "forbidden", status: 403 };
   return { decoded: m.decoded, company: m.company, role, staff: m.staff, isPinSession: !!m.decoded.tv_pin };
 }
