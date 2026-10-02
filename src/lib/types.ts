@@ -53,6 +53,8 @@ export interface Company {
   /** Only populated by the superadmin company-list endpoint. */
   staffCount?: number;
   lastActivity?: string | null;
+  /** Set when the owner closed the company: permanent deletion allowed from this date. */
+  deleteAfter?: string | null;
 }
 
 // ── Staff (tv_companies/{id}/staff/{uid}) ────────────────────────────────────

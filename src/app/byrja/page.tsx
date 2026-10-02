@@ -17,7 +17,7 @@ const T = {
     phone: "Símanúmer", owner: "Nafnið þitt", authorized: "Ég er í forsvari fyrir rekstraraðilann eða hef umboð hans.",
     accept: "Ég samþykki", terms: "skilmála", and: "og", dpa: "vinnslusamning", create: "Stofna stað", creating: "Stofna…",
     free: "Laus", taken: "Upptekin", invalid: "Ógild slóð", ktBad: "Ógild kennitala",
-    agreement: "Launaútreikningur styður kjarasamning SA og Eflingar (hótel og veitingahús). Aðrir samningar, t.d. Matvís fyrir matreiðslumenn, eru ekki enn studdir í launaútreikningi — stimplun og vaktaplan virka fyrir alla.",
+    agreement: "Launaútreikningur ber kjör saman við kjarasamning SA og Eflingar (hótel og veitingahús). Starfsfólk á öðrum samningum (t.d. VR eða Matvís) má skrá á sérkjörum með eigin taxta og álögum, en þá er engin lágmarksathugun. Stimplun og vaktaplan virka fyrir alla.",
     signedInAs: "Innskráð(ur) sem", other: "Annar aðgangur", privacy: "Persónuvernd",
   },
   en: {
@@ -27,7 +27,7 @@ const T = {
     phone: "Phone", owner: "Your name", authorized: "I represent the business or am authorised by it.",
     accept: "I accept the", terms: "terms", and: "and", dpa: "data processing agreement", create: "Create venue", creating: "Creating…",
     free: "Available", taken: "Taken", invalid: "Invalid address", ktBad: "Invalid kennitala",
-    agreement: "Pay calculation supports the SA/Efling hotel & restaurant agreement. Other agreements (e.g. Matvís for chefs) are not yet supported for pay — clocking and scheduling work for everyone.",
+    agreement: "Pay is checked against the SA/Efling hotel & restaurant agreement. Staff on other agreements (e.g. VR or Matvís) can be recorded on custom terms with their own rate and premiums, without a minimum check. Clocking and scheduling work for everyone.",
     signedInAs: "Signed in as", other: "Use another account", privacy: "Privacy",
   },
 };

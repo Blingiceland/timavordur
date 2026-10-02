@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
         id: doc.id, name: d.name, slug: d.slug, adminEmails: d.adminEmails || [], active: d.active ?? true,
         status: d.status === "suspended" ? "suspended" : "active", source: d.source || "superadmin",
         createdAt: d.createdAt, kennitala: d.kennitala || "", contactPhone: d.contactPhone || "",
-        groupId: d.groupId || doc.id, staffCount: staff.data().count,
+        groupId: d.groupId || doc.id, staffCount: staff.data().count, deleteAfter: d.deleteAfter ?? null,
         lastActivity: last.empty ? null : last.docs[0].data().timestamp?.toDate?.().toISOString() ?? null,
       };
     }));

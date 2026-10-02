@@ -12,6 +12,7 @@ import {
   EMPTY_REG, EMPTY_STAFF, REG_FIELDS_DEFAULTS, ALL_REG_FIELD_KEYS, ALL_REG_FIELD_LABELS,
 } from "./_portal/constants";
 import { StaffFormFields } from "./_portal/StaffFormFields";
+import { DataControls } from "./_portal/DataControls";
 import { OnboardingCard, type OnboardingState } from "./_portal/Onboarding";
 
 export default function CompanyPortal() {
@@ -1082,6 +1083,7 @@ export default function CompanyPortal() {
                 <SettingsStatus section="fields" />
               </div>
             </div>
+            {user && <DataControls user={user} slug={slug} lang={lang === "en" ? "en" : "is"} />}
           </div>
         )}
       </div>

@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminDb } from "@/lib/firebase-admin";
 import { verifySuperAdmin } from "@/lib/auth";
 import { requestIdOf, writeAudit } from "@/lib/audit";
+import { purgeCompany } from "@/lib/server/company-data";
 import { fail, handle, HttpError, json } from "@/lib/server/http";
 import { readJsonObject } from "@/lib/validation";
 
@@ -33,7 +34,11 @@ export async function PATCH(req: NextRequest) {
       // Close or reopen a company. Data is kept; every login and API call is refused while closed.
       await adminDb.runTransaction(async (tx) => {
         const before = (await tx.get(companyRef)).data()?.status ?? "active";
-        tx.update(companyRef, { status: suspend ? "suspended" : "active", statusChangedAt: FieldValue.serverTimestamp(), statusChangedBy: su.uid });
+        tx.update(companyRef, {
+          status: suspend ? "suspended" : "active", statusChangedAt: FieldValue.serverTimestamp(), statusChangedBy: su.uid,
+          // Reopening cancels an owner's closure request and its scheduled deletion.
+          ...(suspend ? {} : { closureRequestedAt: FieldValue.delete(), closureRequestedBy: FieldValue.delete(), deleteAfter: FieldValue.delete() }),
+        });
         writeAudit({ companyId: companyRef.id, actorUid: su.uid, actorRole: "superadmin", action: suspend ? "company.suspend" : "company.reopen", targetType: "company", targetId: companyRef.id, before: { status: before }, after: { status: suspend ? "suspended" : "active" }, requestId: requestIdOf(req) }, tx);
       });
       if (!addEmail && !removeEmail && !linkToSlug) return json({ ok: true, status: suspend ? "suspended" : "active" });
@@ -88,5 +93,31 @@ export async function PATCH(req: NextRequest) {
       return { adminEmails: next, previousAdminEmails: current, roleChanges: changes };
     });
     return json({ ok: true, ...result });
+  });
+}
+
+// DELETE /api/superadmin/company { slug, confirmSlug } — permanent deletion.
+// Only a closed company; if the owner asked for closure, only after the
+// retention date they were promised. A minimal record is kept in tv_deletions.
+export async function DELETE(req: NextRequest) {
+  return handle("superadmin/company DELETE", {}, async () => {
+    const su = await verifySuperAdmin(req);
+    if (!su) return fail("not_superadmin", 403);
+    const body = await readJsonObject(req);
+    const slug = typeof body?.slug === "string" ? body.slug : "";
+    if (!slug || body?.confirmSlug !== slug) return fail("confirm_slug_mismatch", 400);
+    const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).limit(1).get();
+    if (snap.empty) return fail("company_not_found", 404);
+    const doc = snap.docs[0];
+    const c = doc.data();
+    if (c.status !== "suspended") return fail("not_suspended", 409);
+    const today = new Date().toISOString().slice(0, 10);
+    if (c.deleteAfter && c.deleteAfter > today) return fail("retention_period", 409, { deleteAfter: c.deleteAfter });
+    const { removedLogins } = await purgeCompany(doc.id, c);
+    await adminDb.collection("tv_deletions").doc(doc.id).set({
+      slug, name: c.name ?? "", kennitala: c.kennitala ?? "", deletedAt: FieldValue.serverTimestamp(), deletedBy: su.uid,
+      closureRequestedBy: c.closureRequestedBy ?? null, removedLogins, requestId: requestIdOf(req),
+    });
+    return json({ ok: true, removedLogins });
   });
 }

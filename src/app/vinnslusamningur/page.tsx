@@ -31,7 +31,7 @@ export default function Dpa() {
       <h2>6. Trúnaður, aðstoð og tilkynningar</h2>
       <p>Þeir sem hafa aðgang hjá vinnsluaðila eru bundnir trúnaði. Vinnsluaðili aðstoðar við beiðnir skráðra einstaklinga og tilkynnir ábyrgðaraðila um öryggisbrest án ótilhlýðilegrar tafar, eigi síðar en <Fill>48 klst.</Fill> eftir að hans verður vart.</p>
       <h2>7. Lok vinnslu</h2>
-      <p>Við lok samnings eru gögn afhent ábyrgðaraðila á véllæsilegu formi (CSV/JSON) ef óskað er, og þeim síðan eytt <Fill>innan X daga</Fill>, einnig úr afritum innan geymslutíma þeirra.</p>
+      <p>Ábyrgðaraðili getur hvenær sem er sótt öll gögn fyrirtækisins á véllæsilegu formi (JSON) undir Stillingar → Gögn og lokun. Þegar ábyrgðaraðili lokar fyrirtækinu er aðgangi lokað strax og gögnin geymd í 30 daga svo hægt sé að hætta við. Að þeim tíma liðnum er þeim eytt varanlega, og úr afritum þegar geymslutími þeirra rennur út.</p>
       <h2>8. Úttektir</h2>
       <p>Vinnsluaðili lætur ábyrgðaraðila í té upplýsingar sem þarf til að sýna fram á að kröfum sé fullnægt.</p>
     </LegalPage>

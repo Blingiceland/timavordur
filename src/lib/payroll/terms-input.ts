@@ -8,8 +8,10 @@ import { cleanStr, isDate, isEnum, isKr, isNumberIn, unknownKeys } from "../vali
 export const TERMS_INPUT_KEYS = [
   "uid", "effectiveFrom", "reason", "agreementId", "workingArrangement", "payType", "employmentPercentage",
   "wageClass", "managementRole", "birthDate", "employerStartDate", "priorIndustryMonths", "experienceVerifiedOn",
-  "stepOverride", "personalDayRate", "monthlySalary", "fixedAdditions", "orlofOverrideBp",
+  "stepOverride", "personalDayRate", "monthlySalary", "fixedAdditions", "orlofOverrideBp", "customRates",
 ] as const;
+
+const CUSTOM_RATE_KEYS = ["eveningPct", "nightWeekendPct", "barNightPct", "helgidagurPct", "storhatidPct", "overtimePct"] as const;
 
 export type TermsInput = Omit<EmploymentTerms, "id" | "recordedAt" | "recordedBy" | "status" | "legacy">;
 
@@ -30,11 +32,13 @@ export function parseTermsInput(body: Record<string, unknown>): { ok: true; valu
   const reason = cleanStr(body.reason, 300);
   if (reason.length < 3) errors.push("reason:required");
   const agreementId = body.agreementId ?? "efling_sa_hotel";
-  if (agreementId !== "efling_sa_hotel") errors.push("agreementId:unsupported");
+  if (agreementId !== "efling_sa_hotel" && agreementId !== "custom") errors.push("agreementId:unsupported");
+  const custom = agreementId === "custom";
   const workingArrangement = isEnum(body.workingArrangement, ["shift", "casual", "day"] as const) ? body.workingArrangement : (errors.push("workingArrangement:required"), null);
   const payType = isEnum(body.payType, ["hourly", "monthly"] as const) ? body.payType : (errors.push("payType:invalid"), "hourly" as const);
   const employmentPercentage = isNumberIn(body.employmentPercentage, 1, 100) ? body.employmentPercentage : (errors.push("employmentPercentage:1-100"), null);
-  const wageClass = WAGE_CLASSES.find((c) => c === body.wageClass) ?? (errors.push("wageClass:6_or_7"), null);
+  // Custom terms have no agreement table, so no wage class.
+  const wageClass = custom ? null : WAGE_CLASSES.find((c) => c === body.wageClass) ?? (errors.push("wageClass:6_or_7"), null);
   if (body.managementRole !== undefined && typeof body.managementRole !== "boolean") errors.push("managementRole:boolean");
   const birthDate = optDate("birthDate");
   const employerStartDate = optDate("employerStartDate");
@@ -84,13 +88,29 @@ export function parseTermsInput(body: Record<string, unknown>): { ok: true; valu
   }
   if (birthDate && effectiveFrom && birthDate > effectiveFrom) errors.push("birthDate:after_effective");
 
+  let customRates: TermsInput["customRates"] = null;
+  if (custom) {
+    const c = body.customRates as Record<string, unknown> | null | undefined;
+    if (!c || typeof c !== "object" || Array.isArray(c)) errors.push("customRates:required");
+    else if (CUSTOM_RATE_KEYS.some((k) => !isNumberIn(c[k], 0, 300))) errors.push("customRates:0-300");
+    else customRates = {
+      eveningPct: c.eveningPct as number, nightWeekendPct: c.nightWeekendPct as number, barNightPct: c.barNightPct as number,
+      helgidagurPct: c.helgidagurPct as number, storhatidPct: c.storhatidPct as number, overtimePct: c.overtimePct as number,
+    };
+    if (payType === "hourly" && personalDayRate === null) errors.push("personalDayRate:required_for_custom");
+    if (body.managementRole === true) errors.push("managementRole:not_for_custom");
+  } else if (body.customRates !== undefined && body.customRates !== null) {
+    errors.push("customRates:custom_only");
+  }
+
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
     value: {
-      uid, effectiveFrom, reason, agreementId: "efling_sa_hotel", workingArrangement, payType,
+      uid, effectiveFrom, reason, agreementId: custom ? "custom" : "efling_sa_hotel", workingArrangement, payType,
       employmentPercentage, wageClass, managementRole: body.managementRole === true, birthDate, employerStartDate,
       priorIndustryMonths, experienceVerifiedOn, stepOverride, personalDayRate, monthlySalary, fixedAdditions, orlofOverrideBp,
+      customRates,
     },
   };
 }

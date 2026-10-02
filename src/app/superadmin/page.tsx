@@ -31,6 +31,20 @@ export default function SuperAdminPage() {
   const [linkTarget, setLinkTarget] = useState("");
 
   // Close or reopen a company (data kept; all logins refused while closed).
+  const handlePurge = async (slug: string, name: string) => {
+    if (!superAdmin) return;
+    const typed = prompt(`EYÐA ${name} VARANLEGA? Öll gögn, stimplanir og innskráningar hverfa og þetta er ekki hægt að afturkalla.
+Skrifaðu slóðarheitið (${slug}) til að staðfesta:`);
+    if (typed !== slug) return;
+    const res = await fetch("/api/superadmin/company", {
+      method: "DELETE", headers: { "Content-Type": "application/json", Authorization: `Bearer ${superAdmin.token}` },
+      body: JSON.stringify({ slug, confirmSlug: typed }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(data.error === "retention_period" ? `Eigandi lokaði — ekki má eyða fyrr en ${data.deleteAfter}.` : `Villa: ${data.error || res.status}`); return; }
+    setCompanies((prev) => prev.filter((c) => c.slug !== slug));
+  };
+
   const handleSuspend = async (slug: string, suspend: boolean, name: string) => {
     if (!superAdmin) return;
     if (suspend && !confirm(`Loka aðgangi ${name}? Enginn getur skráð sig inn fyrr en opnað er aftur. Gögn haldast.`)) return;
@@ -41,7 +55,7 @@ export default function SuperAdminPage() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) { alert(`Villa: ${data.error || res.status}`); return; }
-    setCompanies((prev) => prev.map((c) => (c.slug === slug ? { ...c, status: data.status } : c)));
+    setCompanies((prev) => prev.map((c) => (c.slug === slug ? { ...c, status: data.status, ...(suspend ? {} : { deleteAfter: null }) } : c)));
   };
 
   const handleLink = async (slug: string, linkToSlug: string) => {
@@ -415,6 +429,7 @@ export default function SuperAdminPage() {
                       <span className={`badge ${c.status !== "suspended" ? "badge--success" : "badge--danger"}`}>
                         {c.status !== "suspended" ? "Virkt" : "Lokað"}
                       </span>
+                      {c.deleteAfter && <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 4 }}>Eigandi lokaði · eyða má eftir {c.deleteAfter}</div>}
                     </td>
                     <td style={{ display: "flex", gap: 6 }}>
                       <button
@@ -424,6 +439,11 @@ export default function SuperAdminPage() {
                       >
                         {c.status === "suspended" ? "Opna" : "Loka"}
                       </button>
+                      {c.status === "suspended" && (
+                        <button className="btn btn--ghost btn--sm" style={{ color: "var(--danger)" }} onClick={() => handlePurge(c.slug, c.name)}>
+                          Eyða
+                        </button>
+                      )}
                       <button
                         className="btn btn--secondary btn--sm"
                         onClick={() => { setEditCompany(c); setEditAdminEmail(""); setEditError(""); }}

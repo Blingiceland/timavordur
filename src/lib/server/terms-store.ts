@@ -28,6 +28,7 @@ export function termsFromDoc(id: string, d: FirebaseFirestore.DocumentData): Emp
     monthlySalary: d.monthlySalary ?? null,
     fixedAdditions: Array.isArray(d.fixedAdditions) ? d.fixedAdditions : [],
     orlofOverrideBp: d.orlofOverrideBp ?? null,
+    customRates: d.customRates ?? null,
     legacy: d.legacy ?? null,
   };
 }
