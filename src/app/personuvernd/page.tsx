@@ -14,7 +14,7 @@ export default function Privacy() {
       <h2>Hver sér upplýsingarnar?</h2>
       <p>Þú sérð þínar eigin stimplanir, vaktir, kjör og launasundurliðun. Stjórnendur hjá vinnuveitanda sjá upplýsingar samkvæmt hlutverki sínu; vaktstjórar sjá ekki laun annarra. Launaupplýsingar geta verið sendar bókara vinnuveitanda.</p>
       <h2>Hve lengi?</h2>
-      <p><Fill>Geymslutími ákveðinn af vinnuveitanda, t.d. 7 ár fyrir launagögn skv. bókhaldslögum</Fill>. Tímaskráningar eru aðgengilegar þér í minnst 12 mánuði (gr. 1.11 í kjarasamningi).</p>
+      <p>Tímaskráningar eru aðgengilegar þér í minnst 12 mánuði (gr. 1.11 í kjarasamningi).</p>
       <h2>Réttindi þín</h2>
       <p>Þú átt rétt á aðgangi að upplýsingum um þig, leiðréttingu og í vissum tilvikum eyðingu eða takmörkun vinnslu. Snúðu þér fyrst til vinnuveitanda þíns. Þú getur kvartað til <a href="https://www.personuvernd.is" target="_blank" rel="noreferrer">Persónuverndar</a>.</p>
       <h2>Tengiliður</h2>
