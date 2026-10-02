@@ -29,6 +29,7 @@ export const POLICIES = {
   // Company self sign-up: 3 companies per user and 10 per IP a day.
   companySignupUser: { windowMs: 24 * 3_600_000, max: 3, lockMs: 24 * 3_600_000, maxLockMs: 7 * 24 * 3_600_000 },
   companySignupIp: { windowMs: 24 * 3_600_000, max: 10, lockMs: 24 * 3_600_000, maxLockMs: 7 * 24 * 3_600_000 },
+  contactIp: { windowMs: 60 * 60_000, max: 5, lockMs: 60 * 60_000, maxLockMs: 24 * 3_600_000 },
 } satisfies Record<string, RatePolicy>;
 
 export function isLocked(state: RateState | null, now: number): number {

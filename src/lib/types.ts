@@ -45,7 +45,7 @@ export interface Company {
   /** LEGACY, no longer used for pay — see employmentTerms. */
   wageCategories?: WageCategory[];
   /** "suspended" = closed by superadmin; every login and API call is refused. */
-  status?: "active" | "suspended";
+  status?: "active" | "suspended" | "pending_review";
   /** How the company was created. */
   source?: "superadmin" | "self";
   plan?: "free";
@@ -53,6 +53,8 @@ export interface Company {
   /** Only populated by the superadmin company-list endpoint. */
   staffCount?: number;
   lastActivity?: string | null;
+  /** Set when the owner closed the company: permanent deletion allowed from this date. */
+  deleteAfter?: string | null;
 }
 
 // ── Staff (tv_companies/{id}/staff/{uid}) ────────────────────────────────────

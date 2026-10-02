@@ -25,7 +25,18 @@ const EMPTY_FORM = {
   effectiveFrom: "", reason: "", workingArrangement: "shift", payType: "hourly", employmentPercentage: "100", wageClass: "6",
   managementRole: false, birthDate: "", employerStartDate: "", priorIndustryMonths: "", experienceVerifiedOn: "",
   personalDayRate: "", monthlySalary: "",
+  // "custom" = personal terms outside a supported agreement (e.g. VR, Matvís, sérsamningur).
+  agreement: "efling" as "efling" | "custom",
+  eveningPct: "33", nightWeekendPct: "45", barNightPct: "55", helgidagurPct: "45", storhatidPct: "90", overtimePct: "80",
 };
+const CUSTOM_PCT_FIELDS = [
+  ["eveningPct", "Kvöld virka daga 17–24 %", "Weekday evenings 17–24 %"],
+  ["nightWeekendPct", "Nætur 00–08 og helgar %", "Nights 00–08 and weekends %"],
+  ["barNightPct", "Krá: aðfararnótt lau./sun. 00–05 %", "Bar: Fri/Sat nights 00–05 %"],
+  ["helgidagurPct", "Helgidagar %", "Public holidays %"],
+  ["storhatidPct", "Stórhátíðardagar %", "Major holidays %"],
+  ["overtimePct", "Yfirvinna % ofan á dagvinnu", "Overtime % on top of day rate"],
+] as const;
 
 function rateRow(v: AgreementVersion, cls: WageClass, step: Step) {
   const m = v.monthly[cls][step];
@@ -36,6 +47,14 @@ function rateRow(v: AgreementVersion, cls: WageClass, step: Step) {
 function ExplainBox({ e, lang }: { e: Explain; lang: Lang }) {
   const is = lang === "is";
   if (!e.ok) return <ul style={{ margin: 0, paddingLeft: 18, color: "var(--danger)" }}>{e.issues.map(c => <li key={c}>{ISSUE_TEXT[c]?.[lang] ?? c}</li>)}</ul>;
+  if (e.version === "custom") return (
+    <div style={{ fontSize: "0.88rem", display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 14px" }}>
+      <span className="text-muted">{is ? "Kjör" : "Terms"}</span><span>{is ? "Sérkjör utan studds kjarasamnings" : "Custom terms outside a supported agreement"}</span>
+      <span className="text-muted">{is ? "Dagvinnutaxti" : "Day rate"}</span><span>{formatRate(e.dayCents ?? 0)} kr/{is ? "klst" : "h"}</span>
+      <span className="text-muted">{is ? "Yfirvinna" : "Overtime"}</span><span>{formatRate(e.overtimeCents ?? 0)} kr/{is ? "klst" : "h"}</span>
+      <span className="text-muted">{is ? "Orlof" : "Holiday pay"}</span><span>{((e.orlofBp ?? 0) / 100).toFixed(2).replace(".", ",")}%</span>
+    </div>
+  );
   return (
     <div style={{ fontSize: "0.88rem", display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 14px" }}>
       <span className="text-muted">{is ? "Taxtaútgáfa" : "Rate table"}</span><span>{e.version} {e.versionStatus === "draft" && <b style={{ color: "#f0a500" }}>{is ? "(drög — ekki greiðslugrunnur)" : "(draft — not a payment basis)"}</b>}</span>
@@ -122,6 +141,13 @@ function RatesInner() {
     const date = /^\d{4}-\d{2}-\d{2}$/.test(form.effectiveFrom) ? form.effectiveFrom : new Date().toISOString().slice(0, 10);
     const num = (v: string) => (v === "" || Number.isNaN(Number(v)) ? null : Number(v));
     const money = (v: string) => (v.trim() === "" || Number.isNaN(parseKr(v)) ? null : parseKr(v));
+    if (form.agreement === "custom") {
+      const pcts = CUSTOM_PCT_FIELDS.map(([k]) => num(form[k]));
+      const day = form.payType === "hourly"
+        ? (money(form.personalDayRate) ? krToCents(money(form.personalDayRate)!) : null)
+        : (money(form.monthlySalary) && num(form.employmentPercentage) ? Math.round((krToCents(money(form.monthlySalary)!) * 100) / num(form.employmentPercentage)! / 172) : null);
+      return { date, ok: true as const, custom: true as const, day, pcts, version: "custom", draft: false, wageClass: null, step: null, stepBasis: "", minimumMonthly: 0, minimumDayCents: 0, overtimeCents: 0, personalCents: null, issues: [] as IssueCode[] };
+    }
     const t: EmploymentTerms = {
       id: "preview", uid: sel, effectiveFrom: "1900-01-01", recordedAt: "", recordedBy: "", reason: "", status: "active",
       agreementId: "efling_sa_hotel", workingArrangement: form.workingArrangement as EmploymentTerms["workingArrangement"],
@@ -140,7 +166,7 @@ function RatesInner() {
       personalCents = Math.round((krToCents(money(form.monthlySalary)!) * 100) / num(form.employmentPercentage)! / x.version.rules.dayDivisor);
     }
     return {
-      date, ok: true as const, version: x.version.version, draft: x.version.status === "draft", wageClass: x.wageClass, step: x.step,
+      date, ok: true as const, custom: false as const, day: null, pcts: [] as (number | null)[], version: x.version.version, draft: x.version.status === "draft", wageClass: x.wageClass, step: x.step,
       stepBasis: x.stepBasis, minimumMonthly: x.minimumMonthly, minimumDayCents: x.minimumDayCents, overtimeCents: x.overtimeCents,
       personalCents, issues: x.issues.map(i => i.code).filter(c => c !== "unverified_rate_version"),
     };
@@ -155,9 +181,12 @@ function RatesInner() {
     setBusy(true); setMsg(null);
     const num = (v: string) => (v === "" ? null : Number(v));
     const money = (v: string) => (v.trim() === "" ? null : parseKr(v));
+    const custom = form.agreement === "custom";
     const body = {
       uid: sel, effectiveFrom: form.effectiveFrom, reason: form.reason, workingArrangement: form.workingArrangement, payType: form.payType,
-      employmentPercentage: num(form.employmentPercentage), wageClass: num(form.wageClass), managementRole: form.managementRole,
+      agreementId: custom ? "custom" : "efling_sa_hotel",
+      customRates: custom ? Object.fromEntries(CUSTOM_PCT_FIELDS.map(([k]) => [k, num(form[k])])) : null,
+      employmentPercentage: num(form.employmentPercentage), wageClass: custom ? null : num(form.wageClass), managementRole: custom ? false : form.managementRole,
       birthDate: form.birthDate || null, employerStartDate: form.employerStartDate || null, priorIndustryMonths: num(form.priorIndustryMonths),
       experienceVerifiedOn: form.experienceVerifiedOn || null, personalDayRate: form.payType === "hourly" ? money(form.personalDayRate) : null,
       monthlySalary: form.payType === "monthly" ? money(form.monthlySalary) : null,
@@ -263,7 +292,7 @@ function RatesInner() {
                   {rows.map(r => (
                     <tr key={r.uid} style={r.needsPlacement ? { background: "rgba(255,77,106,0.06)" } : undefined}>
                       <td>{r.name}</td>
-                      <td>{r.current.ok ? `fl. ${r.current.wageClass} · ${STEP_LABEL[r.current.step!][is ? 0 : 1]} · ${formatRate(r.current.dayCents!)} kr` : "—"}{r.current.issues.length > 0 && <div style={{ color: "var(--danger)" }}>{r.current.issues.map(c => ISSUE_TEXT[c]?.[lang] ?? c).join("; ")}</div>}</td>
+                      <td>{r.current.ok ? (r.current.version === "custom" ? `${is ? "Sérkjör" : "Custom"} · ${formatRate(r.current.dayCents!)} kr` : `fl. ${r.current.wageClass} · ${STEP_LABEL[r.current.step!][is ? 0 : 1]} · ${formatRate(r.current.dayCents!)} kr`) : "—"}{r.current.issues.length > 0 && <div style={{ color: "var(--danger)" }}>{r.current.issues.map(c => ISSUE_TEXT[c]?.[lang] ?? c).join("; ")}</div>}</td>
                       <td>{r.nextYear.ok ? `${formatRate(r.nextYear.dayCents!)} kr${r.nextYear.versionStatus === "draft" ? (is ? " (drög)" : " (draft)") : ""}` : "—"}</td>
                       <td><button className="btn btn--secondary btn--sm" onClick={() => { setSel(r.uid); setMsg(null); }}>{is ? "Skrá kjör" : "Record terms"}</button></td>
                     </tr>
@@ -285,6 +314,11 @@ function RatesInner() {
               </details>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 12 }}>
+              <label className="form-group" style={{ margin: 0, gridColumn: "1 / -1" }}><span className="form-label">{is ? "Kjarasamningur" : "Agreement"}</span>
+                <select className="form-input" value={form.agreement} onChange={e => setForm(f => ({ ...f, agreement: e.target.value as "efling" | "custom" }))}>
+                  <option value="efling">{is ? "SA / Efling — hótel og veitingahús (lágmark reiknað)" : "SA / Efling — hotels & restaurants (minimum checked)"}</option>
+                  <option value="custom">{is ? "Sérkjör / annar samningur (t.d. VR, Matvís) — engin lágmarksathugun" : "Custom / other agreement (e.g. VR, Matvís) — no minimum check"}</option>
+                </select></label>
               {([
                 ["effectiveFrom", is ? "Gildir frá *" : "Effective from *", "date"],
                 ["employerStartDate", is ? "Upphaf ráðningar" : "Employment start", "date"],
@@ -292,17 +326,21 @@ function RatesInner() {
                 ["priorIndustryMonths", is ? "Staðfest fyrri reynsla (mán.)" : "Verified prior experience (months)", "number"],
                 ["experienceVerifiedOn", is ? "Reynsla staðfest dags." : "Experience verified on", "date"],
                 ["employmentPercentage", is ? "Starfshlutfall %" : "Employment %", "number"],
-              ] as const).map(([k, label, type]) => (
+              ] as const).filter(([k]) => form.agreement === "efling" || ["effectiveFrom", "employmentPercentage"].includes(k)).map(([k, label, type]) => (
                 <label key={k} className="form-group" style={{ margin: 0 }}>
                   <span className="form-label">{label}</span>
                   <input className="form-input" type={type} value={String(form[k])} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} />
                 </label>
               ))}
-              <label className="form-group" style={{ margin: 0 }}><span className="form-label">{is ? "Launaflokkur" : "Wage class"}</span>
+              {form.agreement === "custom" && CUSTOM_PCT_FIELDS.map(([k, li, le]) => (
+                <label key={k} className="form-group" style={{ margin: 0 }}><span className="form-label">{is ? li : le}</span>
+                  <input className="form-input" type="number" min={0} max={300} value={form[k]} onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))} /></label>
+              ))}
+              {form.agreement === "efling" && <label className="form-group" style={{ margin: 0 }}><span className="form-label">{is ? "Launaflokkur" : "Wage class"}</span>
                 <select className="form-input" value={form.wageClass} onChange={e => setForm(f => ({ ...f, wageClass: e.target.value }))}>
                   <option value="6">6 — {is ? "almennt starfsfólk veitingahúsa" : "general restaurant staff"}</option>
                   <option value="7">7 — {is ? "sérþjálfað starfsfólk" : "specially trained staff"}</option>
-                </select></label>
+                </select></label>}
               <label className="form-group" style={{ margin: 0 }}><span className="form-label">{is ? "Vinnufyrirkomulag" : "Working arrangement"}</span>
                 <select className="form-input" value={form.workingArrangement} onChange={e => setForm(f => ({ ...f, workingArrangement: e.target.value }))}>
                   <option value="shift">{is ? "Vaktavinna (gr. 3)" : "Shift work (3)"}</option>
@@ -315,14 +353,14 @@ function RatesInner() {
                   <option value="monthly">{is ? "Föst mánaðarlaun" : "Fixed monthly"}</option>
                 </select></label>
               {form.payType === "hourly"
-                ? <label className="form-group" style={{ margin: 0 }}><span className="form-label">{is ? "Persónulegur dagvinnutaxti (kr/klst, valfrjálst)" : "Personal day rate (optional)"}</span>
+                ? <label className="form-group" style={{ margin: 0 }}><span className="form-label">{form.agreement === "custom" ? (is ? "Dagvinnutaxti (kr/klst) *" : "Day rate (kr/h) *") : (is ? "Persónulegur dagvinnutaxti (kr/klst, valfrjálst)" : "Personal day rate (optional)")}</span>
                     <input className="form-input" type="text" inputMode="decimal" placeholder="2801,87" aria-invalid={form.personalDayRate.trim() !== "" && Number.isNaN(parseKr(form.personalDayRate))} value={form.personalDayRate} onChange={e => setForm(f => ({ ...f, personalDayRate: e.target.value }))} /></label>
                 : <label className="form-group" style={{ margin: 0 }}><span className="form-label">{is ? "Mánaðarlaun fyrir starfshlutfallið *" : "Monthly salary for the percentage *"}</span>
                     <input className="form-input" type="text" inputMode="decimal" placeholder="520000" aria-invalid={form.monthlySalary.trim() !== "" && Number.isNaN(parseKr(form.monthlySalary))} value={form.monthlySalary} onChange={e => setForm(f => ({ ...f, monthlySalary: e.target.value }))} /></label>}
-              <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {form.agreement === "efling" && <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <input type="checkbox" checked={form.managementRole} onChange={e => setForm(f => ({ ...f, managementRole: e.target.checked }))} />
                 {is ? "Ráðin(n) til stjórnunarstarfa skv. ráðningarsamningi (+15%, gr. 1.2.4)" : "Employed in a management role per contract (+15%, 1.2.4)"}
-              </label>
+              </label>}
               <label className="form-group" style={{ margin: 0, gridColumn: "1 / -1" }}><span className="form-label">{is ? "Ástæða / heimild *" : "Reason / source *"}</span>
                 <input className="form-input" value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} placeholder={is ? "t.d. ráðningarsamningur dags. …" : "e.g. employment contract dated …"} /></label>
             </div>
@@ -330,9 +368,16 @@ function RatesInner() {
               <div aria-live="polite" style={{ marginTop: 14, padding: 14, borderRadius: 10, border: "1px solid var(--border)", background: "var(--bg-surface)", fontSize: "0.9rem" }}>
                 {!live.ok ? (
                   <span style={{ color: "var(--danger)" }}>{live.issues.map(c => ISSUE_TEXT[c]?.[lang] ?? c).join("; ")}</span>
+                ) : live.custom ? (
+                  live.day === null || live.pcts.some(x => x === null)
+                    ? <span className="text-muted">{is ? "Skráðu dagvinnutaxta (eða mánaðarlaun) og öll álög." : "Enter the day rate (or monthly salary) and all premiums."}</span>
+                    : <>
+                        <div><b>{is ? "Sérkjör" : "Custom terms"}:</b> {is ? "dagvinna" : "day"} {formatRate(live.day)} · {CUSTOM_PCT_FIELDS.map(([, li, le], i) => `${(is ? li : le).replace(/ %$/, "")} ${formatRate(withPremium(live.day!, live.pcts[i]!))}`).join(" · ")} kr/{is ? "klst" : "h"}</div>
+                        <div className="text-muted" style={{ fontSize: "0.82rem" }}>{is ? "Engin lágmarksathugun — þú berð ábyrgð á að kjörin standist þann samning sem gildir." : "No minimum check — you are responsible for meeting the applicable agreement."}</div>
+                      </>
                 ) : (
                   <>
-                    <div><b>{is ? "Samningslágmark" : "Agreement minimum"} {live.date}:</b> {is ? "fl." : "cl."} {live.wageClass} · {STEP_LABEL[live.step][is ? 0 : 1]}{form.managementRole ? " · +15%" : ""} → <b>{formatRate(live.minimumDayCents)} kr/{is ? "klst" : "h"}</b> ({formatKr(live.minimumMonthly * 100)} kr/{is ? "mán" : "mo"} {is ? "fyrir fullt starf" : "full-time"}) · {is ? "yfirvinna" : "overtime"} {formatRate(live.overtimeCents)} kr</div>
+                    <div><b>{is ? "Samningslágmark" : "Agreement minimum"} {live.date}:</b> {is ? "fl." : "cl."} {live.wageClass} · {live.step ? STEP_LABEL[live.step][is ? 0 : 1] : ""}{form.managementRole ? " · +15%" : ""} → <b>{formatRate(live.minimumDayCents)} kr/{is ? "klst" : "h"}</b> ({formatKr(live.minimumMonthly * 100)} kr/{is ? "mán" : "mo"} {is ? "fyrir fullt starf" : "full-time"}) · {is ? "yfirvinna" : "overtime"} {formatRate(live.overtimeCents)} kr</div>
                     <div className="text-muted" style={{ fontSize: "0.82rem" }}>{is ? "Þrep" : "Step"}: {live.stepBasis} · {is ? "taxtaútgáfa" : "rate table"} {live.version}{live.draft && <b style={{ color: "#f0a500" }}> ({is ? "drög" : "draft"})</b>}</div>
                     {live.personalCents !== null && (
                       live.personalCents >= live.minimumDayCents

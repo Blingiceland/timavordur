@@ -10,6 +10,8 @@ export interface MailMessage {
   subject: string;
   text: string;
   html: string;
+  /** Where replies go (Resend reply_to). */
+  replyTo?: string;
 }
 
 export type MailResult = { sent: true } | { sent: false; reason: "not_configured" | "rejected" | "network" };
@@ -27,7 +29,7 @@ export async function sendMail(msg: MailMessage): Promise<MailResult> {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: [msg.to], subject: msg.subject, text: msg.text, html: msg.html }),
+      body: JSON.stringify({ from, to: [msg.to], subject: msg.subject, text: msg.text, html: msg.html, ...(msg.replyTo ? { reply_to: msg.replyTo } : {}) }),
     });
     if (!res.ok) {
       console.error("[mail] Resend rejected", res.status, await res.text().catch(() => ""));

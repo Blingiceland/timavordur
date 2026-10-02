@@ -58,6 +58,7 @@ const ERRORS: Record<string, [string, string]> = {
   invalid_email: ["Ógilt netfang", "Invalid e-mail address"],
   email_required_for_generated_pin: ["Settu inn netfang eða PIN", "Enter an e-mail address or a PIN"],
   not_approved: ["Starfsmaður er ekki samþykktur", "The employee is not approved"],
+  company_pending: ["Skráning staðarins bíður samþykkis", "This workplace is awaiting approval"],
   company_suspended: ["Aðgangi þessa staðar hefur verið lokað", "This workplace's access has been closed"],
   company_not_found: ["Staður fannst ekki", "Workplace not found"],
   google_signup_required: ["Nýskráning fer fram með Google", "Sign-up is done with Google"],

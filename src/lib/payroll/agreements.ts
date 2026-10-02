@@ -50,7 +50,7 @@ export interface AgreementRules {
 }
 
 export interface AgreementVersion {
-  agreementId: AgreementId;
+  agreementId: AgreementId | "custom";
   version: string;
   effectiveFrom: string; // YYYY-MM-DD inclusive, 00:00 UTC
   effectiveTo: string | null; // exclusive
@@ -177,6 +177,28 @@ export const AGREEMENT_VERSIONS: AgreementVersion[] = [
     ],
   },
 ];
+
+/**
+ * Stand-in "version" for personal terms outside a supported agreement. It only
+ * supplies the time windows and day divisor; there is no minimum table.
+ */
+export const CUSTOM_VERSION: AgreementVersion = {
+  agreementId: "custom",
+  version: "custom",
+  effectiveFrom: "1900-01-01",
+  effectiveTo: null,
+  status: "verified",
+  verification: "Persónuleg kjör utan studds kjarasamnings — álög skv. skráningu atvinnurekanda, enginn lágmarkssamanburður.",
+  checkedOn: "2026-10-02",
+  sources: [],
+  roundingPolicy: ROUNDING,
+  monthly: {
+    6: { start: 0, y1: 0, y3: 0, y5: 0 },
+    7: { start: 0, y1: 0, y3: 0, y5: 0 },
+  },
+  rules: RULES_2024_2028,
+  notes: [],
+};
 
 export type VersionLookup =
   | { ok: true; version: AgreementVersion }

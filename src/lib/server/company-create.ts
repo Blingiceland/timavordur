@@ -53,7 +53,8 @@ export async function createCompany(input: CreateCompanyInput): Promise<{ id: st
       kennitala: kt ?? "",
       groupId,
       active: true,
-      status: "active",
+      // Self sign-ups wait for the operator's review; superadmin-created companies are active at once.
+      status: input.source === "self" ? "pending_review" : "active",
       plan: "free",
       source: input.source,
       createdBy: input.createdBy,

@@ -9,6 +9,22 @@ import type { Issue } from "./issues";
 export type WorkingArrangement = "shift" | "casual" | "day";
 export type PayType = "hourly" | "monthly" | "averaged";
 
+/**
+ * Personal terms outside a supported agreement (agreementId "custom"): the
+ * employer states the premiums. Time windows follow the SA/Efling rules
+ * (17–24, 00–08, weekends, bar nights 00–05, holidays); only the percentages
+ * are the employer's. No minimum-wage comparison is made.
+ */
+export interface CustomRates {
+  eveningPct: number;
+  nightWeekendPct: number;
+  barNightPct: number;
+  helgidagurPct: number;
+  storhatidPct: number;
+  /** Overtime = day rate × (1 + overtimePct / 100). */
+  overtimePct: number;
+}
+
 export interface FixedAddition {
   label: string;
   monthlyAmount: number; // kr per month
@@ -42,6 +58,8 @@ export interface EmploymentTerms {
   fixedAdditions: FixedAddition[];
   /** Persónulegt orlofshlutfall ef betra en samningur (punktar, 1017 = 10,17%). */
   orlofOverrideBp: number | null;
+  /** Álög fyrir agreementId "custom"; null annars. */
+  customRates?: CustomRates | null;
   /** Varðveitt eldri gildi úr migration — aldrei notuð í útreikning. */
   legacy?: Record<string, unknown> | null;
 }
@@ -105,6 +123,8 @@ export interface StepResult {
 export function stepOnDate(t: EmploymentTerms, date: string): StepResult {
   const issues: Issue[] = [];
   if (!t.employerStartDate) {
+    // A documented manual step (e.g. "skv. launaseðli") stands on its own.
+    if (t.stepOverride) return { step: t.stepOverride.step, basis: `handvirkt: ${t.stepOverride.reason}`, issues };
     issues.push({ code: "missing_employer_start_date", severity: "blocker", date });
   }
   const companyMonths = t.employerStartDate ? fullMonthsBetween(t.employerStartDate, date) : 0;
@@ -153,6 +173,9 @@ export function orlofBasisPoints(t: EmploymentTerms, date: string): { bp: number
   const yearStart = `${m >= 5 ? y : y - 1}-05-01`;
   const issues: Issue[] = [];
   let bp = 1017;
+  // Outside a supported agreement: statutory 10,17% unless better terms are recorded.
+  if (t.agreementId === "custom") return { bp: Math.max(bp, t.orlofOverrideBp ?? 0), issues };
+  if (!t.employerStartDate && t.orlofOverrideBp) return { bp: t.orlofOverrideBp, issues };
   if (!t.employerStartDate) {
     issues.push({ code: "missing_employer_start_date", severity: "blocker", date });
   } else {

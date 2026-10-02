@@ -2,7 +2,7 @@
 // date → the hourly rates that apply. Contract minimum and personal pay are kept
 // apart so the UI and exports can show both.
 
-import { AGREEMENT_VERSIONS, versionForDate, type AgreementVersion, type Step, type WageClass } from "./agreements";
+import { AGREEMENT_VERSIONS, CUSTOM_VERSION, versionForDate, type AgreementVersion, type Step, type WageClass } from "./agreements";
 import { divRoundHalfUp, fractionOfMonthly, hourlyFromMonthly, krToCents, withPremium } from "./money";
 import type { Issue } from "./issues";
 import { stepOnDate, termsForDate, type EmploymentTerms } from "./terms";
@@ -11,8 +11,9 @@ export interface ResolvedRates {
   date: string;
   terms: EmploymentTerms;
   version: AgreementVersion;
-  wageClass: WageClass;
-  step: Step;
+  /** null for custom terms (no agreement table). */
+  wageClass: WageClass | null;
+  step: Step | null;
   stepBasis: string;
   /** Contract minimum monthly wage incl. management premium (kr). */
   minimumMonthly: number;
@@ -39,6 +40,7 @@ export function resolveRates(
 
   const issues: Issue[] = [];
   if (terms.status === "needs_review") issues.push({ code: "terms_needs_review", severity: "blocker", date });
+  if (terms.agreementId === "custom") return resolveCustom(terms, date, issues);
   if (terms.agreementId !== "efling_sa_hotel") {
     return { ok: false, terms, issues: [...issues, { code: "unsupported_agreement", severity: "blocker", date }] };
   }
@@ -103,6 +105,32 @@ export function resolveRates(
       dayCents,
       overtimeCents,
       premiumCents: (pct: number) => withPremium(dayCents, pct),
+      issues,
+    },
+  };
+}
+
+/** Personal terms outside a supported agreement: the recorded pay and premiums, no minimum check. */
+function resolveCustom(terms: EmploymentTerms, date: string, issues: Issue[]): RateResolution {
+  const rules = CUSTOM_VERSION.rules;
+  let dayCents: number | null = null;
+  if (terms.payType === "monthly" && terms.monthlySalary && terms.employmentPercentage) {
+    dayCents = divRoundHalfUp(divRoundHalfUp(krToCents(terms.monthlySalary) * 100, terms.employmentPercentage), rules.dayDivisor);
+  } else if (terms.payType === "hourly" && terms.personalDayRate) {
+    dayCents = krToCents(terms.personalDayRate);
+  }
+  if (dayCents === null) return { ok: false, terms, issues: [...issues, { code: "custom_missing_pay", severity: "blocker", date }] };
+  const c = terms.customRates;
+  if (!c) return { ok: false, terms, issues: [...issues, { code: "custom_missing_rates", severity: "blocker", date }] };
+  if (!terms.workingArrangement) issues.push({ code: "missing_working_arrangement", severity: "blocker", date });
+  const day = dayCents;
+  return {
+    ok: true,
+    rates: {
+      date, terms, version: CUSTOM_VERSION, wageClass: null, step: null, stepBasis: "",
+      minimumMonthly: 0, minimumDayCents: 0, basis: "personal", dayCents: day,
+      overtimeCents: withPremium(day, c.overtimePct),
+      premiumCents: (pct: number) => withPremium(day, pct),
       issues,
     },
   };

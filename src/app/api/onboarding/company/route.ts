@@ -1,20 +1,18 @@
 import { NextRequest } from "next/server";
 import { verifyToken } from "@/lib/auth";
 import { requestIdOf } from "@/lib/audit";
-import { loginUrlFor, PRODUCT_HOST } from "@/lib/branded-hosts";
 import { getClientIp } from "@/lib/ip";
-import { sendMail } from "@/lib/mail";
 import { isKennitala, isValidSlug, normaliseKennitala } from "@/lib/onboarding";
 import { POLICIES, lockedFor, recordAttempt } from "@/lib/rate-limit";
 import { createCompany } from "@/lib/server/company-create";
+import { mailOperatorNewVenue, mailOwnerReceived } from "@/lib/server/onboarding-mail";
 import { fail, handle, json } from "@/lib/server/http";
 import { cleanStr, isEnum, readJsonObject } from "@/lib/validation";
 
-const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
-
 // POST /api/onboarding/company — a bar/restaurant owner creates their company.
-// Requires a Google sign-in with a verified e-mail. The company is active at
-// once and the signed-in user is its owner. The superadmin is notified.
+// Requires a Google sign-in with a verified e-mail. The signed-in user is its
+// owner; the company waits for the operator's approval (superadmin) before
+// anyone can use it. Operator and owner are e-mailed.
 export async function POST(req: NextRequest) {
   return handle("onboarding/company", {}, async () => {
     const decoded = await verifyToken(req);
@@ -55,33 +53,8 @@ export async function POST(req: NextRequest) {
       createdBy: decoded.uid, requestId: requestIdOf(req),
     });
 
-    const portal = loginUrlFor(slug);
-    const notify = process.env.SUPERADMIN_NOTIFY_EMAIL;
-    await Promise.all([
-      notify
-        ? sendMail({
-            to: notify,
-            subject: `Nýr staður í Tímaverði: ${name}`,
-            text: `${name} (kt. ${kennitala}) skráði sig.\nEigandi: ${ownerName} <${email}>${phone ? `, sími ${phone}` : ""}\nSlóð: ${portal}\nSuperadmin: https://${PRODUCT_HOST}/superadmin`,
-            html: `<p><b>${esc(name)}</b> (kt. ${esc(kennitala)}) skráði sig.</p><p>Eigandi: ${esc(ownerName)} &lt;${esc(email)}&gt;${phone ? `, sími ${esc(phone)}` : ""}</p><p><a href="${esc(portal)}">${esc(portal)}</a> · <a href="https://${PRODUCT_HOST}/superadmin">Superadmin</a></p>`,
-          })
-        : Promise.resolve(null),
-      sendMail({
-        to: email,
-        subject: `Velkomin í Tímavörð — ${name}`,
-        text: [
-          `Hæ ${ownerName},`, "", `${name} er komið í Tímavörð. Slóðin ykkar er:`, portal, "",
-          "Fyrstu skref:",
-          "1. Skráðu þig inn með Google á slóðinni hér að ofan.",
-          "2. Stillingar: tegund reksturs og stimplun aðeins á Wi-Fi staðarins.",
-          "3. Hengdu upp QR-kóðann (á forsíðunni þinni) svo starfsfólk skrái sig.",
-          "4. Samþykktu starfsfólk — það fær PIN í pósti.",
-          "5. Skráðu kjör hvers og eins og búðu til fyrsta vaktaplanið.",
-        ].join("\n"),
-        html: `<p>Hæ ${esc(ownerName)},</p><p><b>${esc(name)}</b> er komið í Tímavörð. Slóðin ykkar er <a href="${esc(portal)}">${esc(portal)}</a>.</p>
-<ol><li>Skráðu þig inn með Google á slóðinni.</li><li>Stillingar: tegund reksturs og stimplun aðeins á Wi-Fi staðarins.</li><li>Hengdu upp QR-kóðann svo starfsfólk skrái sig.</li><li>Samþykktu starfsfólk — það fær PIN í pósti.</li><li>Skráðu kjör hvers og eins og búðu til fyrsta vaktaplanið.</li></ol>`,
-      }),
-    ]);
-    return json({ ok: true, slug: created.slug, url: portal });
+    const venue = { name, slug: created.slug, kennitala, ownerName, ownerEmail: email, phone };
+    await Promise.all([mailOperatorNewVenue(venue), mailOwnerReceived(venue)]);
+    return json({ ok: true, slug: created.slug, status: "pending_review" });
   });
 }

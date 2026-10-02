@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import { auth, googleProvider } from "@/lib/firebase";
@@ -12,6 +13,7 @@ import {
   EMPTY_REG, EMPTY_STAFF, REG_FIELDS_DEFAULTS, ALL_REG_FIELD_KEYS, ALL_REG_FIELD_LABELS,
 } from "./_portal/constants";
 import { StaffFormFields } from "./_portal/StaffFormFields";
+import { DataControls } from "./_portal/DataControls";
 import { OnboardingCard, type OnboardingState } from "./_portal/Onboarding";
 
 export default function CompanyPortal() {
@@ -49,7 +51,7 @@ export default function CompanyPortal() {
   // Workplace picked for the next punch-in when the person works at several.
   const [punchSlug, setPunchSlug] = useState<string>("");
   const [editCompanies, setEditCompanies] = useState<string[]>([]);
-  const [companyClosed, setCompanyClosed] = useState(false);
+  const [companyClosed, setCompanyClosed] = useState<"" | "closed" | "pending">("");
   // Registration
   const [regForm, setRegForm] = useState<Record<string, string>>(EMPTY_REG);
   const [regSubmitting, setRegSubmitting] = useState(false);
@@ -80,7 +82,8 @@ export default function CompanyPortal() {
 
   useEffect(() => {
     fetch(`/api/${slug}/company`).then(r => r.json().catch(() => null)).then(d => {
-      if (d?.error === "company_suspended") setCompanyClosed(true);
+      if (d?.error === "company_suspended") setCompanyClosed("closed");
+      if (d?.error === "company_pending") setCompanyClosed("pending");
       if (d?.groupCompanies) { setGroupList(d.groupCompanies); setChosenCompanies([slug]); }
     }).catch(() => { /* non-critical */ });
   }, [slug]);
@@ -378,6 +381,16 @@ export default function CompanyPortal() {
   );
 
   // ─── Company closed by the operator ───────────────────────────────────────
+  if (companyClosed === "pending") return (
+    <div className="page" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 16 }}>
+      <div className="card" role="status" style={{ maxWidth: 440, padding: 32, textAlign: "center" }}>
+        <div style={{ fontSize: "2.4rem" }}>⏳</div>
+        <h1 style={{ fontSize: "1.2rem" }}>{lang === "en" ? "Awaiting approval" : "Bíður samþykkis"}</h1>
+        <p className="text-secondary">{lang === "en" ? "We review every new workplace. The owner gets an e-mail as soon as access is opened." : "Við förum yfir hvern nýjan stað. Eigandinn fær póst um leið og aðgangurinn er opnaður."}</p>
+        <p style={{ fontSize: "0.85rem" }}><Link href="/hafa-samband">{lang === "en" ? "Contact us" : "Hafa samband"}</Link></p>
+      </div>
+    </div>
+  );
   if (companyClosed) return (
     <div className="page" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 16 }}>
       <div className="card" role="alert" style={{ maxWidth: 420, padding: 32, textAlign: "center" }}>
@@ -1082,6 +1095,7 @@ export default function CompanyPortal() {
                 <SettingsStatus section="fields" />
               </div>
             </div>
+            {user && <DataControls user={user} slug={slug} lang={lang === "en" ? "en" : "is"} />}
           </div>
         )}
       </div>
