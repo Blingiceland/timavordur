@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { BRANDED_HOSTS } from "./src/lib/branded-hosts";
 
 const nextConfig: NextConfig = {
   // Pin the workspace root so Turbopack doesn't infer it from a stray parent
@@ -11,12 +12,13 @@ const nextConfig: NextConfig = {
     // landing route for this host (a plain-array rewrite is "afterFiles" and would
     // be ignored because "/" already matches the landing page).
     return {
-      beforeFiles: [
-        // Branded staff entry point: staff.dillon.is shows the Dillon portal at its
-        // root while keeping the address bar on staff.dillon.is.
-        { source: "/", has: [{ type: "host", value: "staff.dillon.is" }], destination: "/dillon" },
-        { source: "/", has: [{ type: "host", value: "staff.discobar.is" }], destination: "/pablo-discobar" },
-      ],
+      // Branded staff entry points (e.g. staff.dillon.is, staff.discobar.is) show
+      // the company portal at their root while keeping the address bar unchanged.
+      beforeFiles: Object.entries(BRANDED_HOSTS).map(([slug, host]) => ({
+        source: "/",
+        has: [{ type: "host" as const, value: host }],
+        destination: `/${slug}`,
+      })),
     };
   },
 };

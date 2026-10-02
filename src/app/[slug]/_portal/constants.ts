@@ -55,6 +55,14 @@ const ERRORS: Record<string, [string, string]> = {
   pin_too_simple: ["Of einfalt PIN (t.d. 1234, 0000, ártal) — veldu annað", "PIN too simple (e.g. 1234, 0000, a year) — choose another"],
   not_admin_in_company: ["Þú hefur ekki stjórnandaréttindi á þeim stað", "You are not an admin at that workplace"],
   invalid_companies: ["Ógilt val á starfsstað", "Invalid workplace selection"],
+  invalid_email: ["Ógilt netfang", "Invalid e-mail address"],
+  email_required_for_generated_pin: ["Settu inn netfang eða PIN", "Enter an e-mail address or a PIN"],
+  not_approved: ["Starfsmaður er ekki samþykktur", "The employee is not approved"],
+  company_suspended: ["Aðgangi þessa staðar hefur verið lokað", "This workplace's access has been closed"],
+  company_not_found: ["Staður fannst ekki", "Workplace not found"],
+  google_signup_required: ["Nýskráning fer fram með Google", "Sign-up is done with Google"],
+  google_account_required: ["Notaðu Google-aðgang til að skrá þig", "Use a Google account to register"],
+  verified_email_required: ["Google-netfangið þarf að vera staðfest", "Your Google e-mail must be verified"],
   concurrent_request: ["Önnur stimplun var í vinnslu — ýttu aftur", "Another punch was in progress — press again"],
   forbidden: ["Þú hefur ekki heimild til þessa", "You are not allowed to do this"],
   server_error: ["Villa á þjóni — ekkert var vistað. Reyndu aftur.", "Server error — nothing was saved. Try again."],
@@ -83,7 +91,7 @@ export function errText(code: unknown, lang: Lang, retryAfter?: number): string 
   return base;
 }
 
-const PROFILE_KEYS = ["name", "phone", "address", "ssn", "bankName", "bankAccount", "union", "pension", "workPermit", "workPermitExpiry", "jobTitle", "employmentType", "language"] as const;
+const PROFILE_KEYS = ["name", "email", "phone", "address", "ssn", "bankName", "bankAccount", "union", "pension", "workPermit", "workPermitExpiry", "jobTitle", "employmentType", "language"] as const;
 
 /** Only the allow-listed profile fields (the server rejects anything else). */
 export function profilePayload(form: Partial<TeamMember>, includeUsername: boolean): Record<string, unknown> {

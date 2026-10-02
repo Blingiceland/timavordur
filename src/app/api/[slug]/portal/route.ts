@@ -11,6 +11,7 @@ import { pairPunches, periodContaining } from "@/lib/payroll/punches";
 import { groupCompanies, groupUsernameRef, pinAccountRef } from "@/lib/server/group";
 import { accessFail, fail, handle, HttpError, json } from "@/lib/server/http";
 import { loadPunches } from "@/lib/server/payroll-service";
+import { issuePin, type PinIssueResult } from "@/lib/server/pin-issue";
 import { recordPunch } from "@/lib/server/punch-service";
 import { companyRef, punchStateRef, staffCol } from "@/lib/server/refs";
 import { decideStaffAction, isRole, atLeast } from "@/lib/staff-policy";
@@ -86,7 +87,7 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         requireApproval: company.requireApproval, groupCompanies: groupList, memberships: mine, isPinSession: !!decoded.tv_pin,
       });
     }
-    const role = effectiveRole(staff);
+    const role = effectiveRole(staff, !!decoded.tv_pin);
     const status = typeof staff.status === "string" ? staff.status : "status_missing";
     if (status !== "approved") return json({ registered: true, status, role, name: staff.name, companyName: company.name, memberships: mine, groupCompanies: groupList });
 
@@ -146,8 +147,28 @@ export async function GET(req: NextRequest, { params }: Ctx) {
         addedAt: toIso(s.addedAt || s.registeredAt), companies: companiesByUid.get(d.id) ?? [company.slug],
       };
     });
+    // First steps for the owner (each step is derived from real data).
+    let onboarding: Record<string, boolean> | null = null;
+    if (role === "owner") {
+      const raw = (await companyRef(company.id).get()).data()?.onboarding ?? {};
+      if (!raw.dismissed) {
+        const [terms, shifts, templates] = await Promise.all([
+          companyRef(company.id).collection("employmentTerms").limit(1).get(),
+          companyRef(company.id).collection("shifts").limit(1).get(),
+          companyRef(company.id).collection("shiftTemplates").limit(1).get(),
+        ]);
+        onboarding = {
+          businessType: !!raw.businessTypeConfirmed,
+          network: !!company.ipRestriction?.enabled,
+          staffJoined: staffSnap.size > 1,
+          staffApproved: staffSnap.docs.some((d) => d.id !== decoded.uid && d.data().status === "approved"),
+          terms: !terms.empty,
+          schedule: !shifts.empty || !templates.empty,
+        };
+      }
+    }
     return json({
-      ...base, team, staffList, manageableCompanies: manageable, registrationFields: company.registrationFields,
+      ...base, team, staffList, manageableCompanies: manageable, onboarding, registrationFields: company.registrationFields,
       requireApproval: company.requireApproval, ipRestriction: company.ipRestriction, businessType: company.businessType,
     });
   });
@@ -193,13 +214,14 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
     if (!body) return fail("invalid_body", 400);
     const { uid, action } = body;
     if (!isDocId(uid)) return fail("uid_required", 400);
-    const actions = ["approve", "reject", "update", "reset-pin", "set-role", "delete", "set-companies"] as const;
+    const actions = ["approve", "reject", "update", "reset-pin", "send-pin", "set-role", "delete", "set-companies"] as const;
     if (!isEnum(action, actions)) return fail("unknown_action", 400);
     const requestId = requestIdOf(req);
     const ref = staffRef(company.id, uid);
     const g = company.groupId;
 
     if (action === "set-companies") return setCompanies(req, company, decoded.uid, uid, body.companies, requestId);
+    if (action === "send-pin") return sendPin(req, company, decoded.uid, myRole, uid, requestId);
 
     // Validate payloads before the transaction.
     let profile: Record<string, unknown> | null = null;
@@ -278,6 +300,8 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
         }
       } else {
         tx.update(ref, changes);
+        // The PIN e-mail goes to the group login's address — keep it in sync.
+        if (acct?.exists && action === "update" && typeof changes.email === "string") tx.update(acctRef, { email: (changes.email as string).toLowerCase() });
         if (unameRef) {
           tx.set(unameRef, { uid });
           if (target.username) tx.delete(groupUsernameRef(g, target.username));
@@ -291,8 +315,38 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
       return { ok: true, status: changes.status, role: changes.role };
     });
     if (revoke && uid.startsWith("pw_")) await adminAuth.revokeRefreshTokens(uid).catch(() => undefined);
-    return json(result);
+
+    // First approval of a PIN person who has no PIN yet → generate and e-mail it.
+    let pinResult: PinIssueResult | null = null;
+    if (action === "approve") {
+      const acct = await pinAccountRef(g, uid).get();
+      if (acct.exists && !acct.data()!.passwordHash) {
+        pinResult = await issuePin({
+          groupId: g, uid, reset: false, actorUid: decoded.uid, loginSlug: company.slug,
+          origin: new URL(req.url).origin, workplaceNames: [company.name],
+        });
+        await writeAudit({ companyId: company.id, actorUid: decoded.uid, actorRole: myRole, action: "staff.pin_issued", targetType: "staff", targetId: uid, after: { emailed: pinResult.emailed, email: pinResult.email, reason: pinResult.reason ?? null }, requestId });
+      }
+    }
+    return json({ ...result, ...(pinResult ? { pinEmailed: pinResult.emailed, pinEmail: pinResult.email, pin: pinResult.pin, pinReason: pinResult.reason } : {}) });
   });
+}
+
+/** Generate a new PIN and e-mail it (admin+, owner for admin/owner targets). */
+async function sendPin(req: NextRequest, company: Company, actorUid: string, actorRole: Role, uid: string, requestId: string) {
+  const snap = await staffRef(company.id, uid).get();
+  if (!snap.exists) return fail("not_found", 404);
+  const t = snap.data()!;
+  const d = decideStaffAction({ uid: actorUid, role: actorRole }, "reset_pin",
+    { uid, role: isRole(t.role) ? t.role : "staff", status: String(t.status ?? ""), authType: t.authType }, { approvedOwnerCount: 1 });
+  if (!d.ok) return fail(d.error, d.status);
+  if (t.status !== "approved") return fail("not_approved", 409);
+  const r = await issuePin({
+    groupId: company.groupId, uid, reset: true, actorUid, loginSlug: company.slug,
+    origin: new URL(req.url).origin, workplaceNames: [company.name],
+  });
+  await writeAudit({ companyId: company.id, actorUid, actorRole, action: "staff.pin_sent", targetType: "staff", targetId: uid, after: { emailed: r.emailed, email: r.email, reason: r.reason ?? null }, requestId });
+  return json({ ok: true, pinEmailed: r.emailed, pinEmail: r.email, pin: r.pin, pinReason: r.reason });
 }
 
 /**
@@ -356,8 +410,14 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     const { username: rawU, password, role: rawRole, companies: rawCompanies, ...rest } = body;
     const username = typeof rawU === "string" ? rawU.trim().toLowerCase() : "";
     if (!isUsername(username)) return fail("invalid_username", 400);
-    if (!isPin(password)) return fail("pin_must_be_4_digits", 400);
-    if (isWeakPin(password)) return fail("pin_too_simple", 400);
+    const email = typeof rest.email === "string" ? rest.email.trim().toLowerCase() : "";
+    const generate = password === undefined || password === "";
+    if (generate) {
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return fail("email_required_for_generated_pin", 400);
+    } else {
+      if (!isPin(password)) return fail("pin_must_be_4_digits", 400);
+      if (isWeakPin(password)) return fail("pin_too_simple", 400);
+    }
     const newRole: Role = rawRole === undefined ? "staff" : isRole(rawRole) ? rawRole : ("__invalid" as Role);
     if (!isRole(newRole)) return fail("invalid_role", 400);
     const p = sanitizeProfile(rest);
@@ -371,7 +431,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     if (targets.length !== new Set(slugs).size) return fail("invalid_companies", 400);
 
     const uid = "pw_" + randomBytes(12).toString("hex");
-    const { hash, salt } = hashPassword(password);
+    const { hash, salt } = generate ? { hash: null, salt: null } : hashPassword(password as string);
     const g = company.groupId;
     const name = (p.value.name as string) || username;
     await adminDb.runTransaction(async (tx) => {
@@ -382,7 +442,7 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         const me = mine[i].data();
         if (!me || me.status !== "approved" || !atLeast(effectiveRole(me), "admin")) throw new HttpError(403, "not_admin_in_company", { company: c.slug });
       });
-      tx.set(pinAccountRef(g, uid), { uid, username, name, passwordHash: hash, passwordSalt: salt, pinVersion: 0, createdAt: FieldValue.serverTimestamp() });
+      tx.set(pinAccountRef(g, uid), { uid, username, name, email: email || null, passwordHash: hash, passwordSalt: salt, pinVersion: 0, createdAt: FieldValue.serverTimestamp() });
       tx.set(unameRef, { uid });
       for (const c of targets) {
         const doc = {
@@ -393,6 +453,11 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
         writeAudit({ companyId: c.id, actorUid: decoded.uid, actorRole: myRole, action: "staff.create", targetType: "staff", targetId: uid, after: doc, requestId: requestIdOf(req) }, tx);
       }
     });
-    return json({ ok: true, uid });
+    if (!generate) return json({ ok: true, uid });
+    const r = await issuePin({
+      groupId: g, uid, reset: false, actorUid: decoded.uid, loginSlug: targets[0].slug,
+      origin: new URL(req.url).origin, workplaceNames: targets.map((c) => c.name),
+    });
+    return json({ ok: true, uid, pinEmailed: r.emailed, pinEmail: r.email, pin: r.pin, pinReason: r.reason });
   });
 }

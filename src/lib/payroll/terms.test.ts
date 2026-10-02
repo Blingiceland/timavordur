@@ -79,3 +79,21 @@ describe("employerCost — tryggingagjald base includes employer pension", () =>
     expect(employerCost([], 2027).rateStatus).toBe("unverified");
   });
 });
+
+import { formatRate, parseKr } from "./money";
+describe("rate formatting for copy/paste", () => {
+  it("formats hourly rates without a thousands separator", () => {
+    expect(formatRate(280187)).toBe("2801,87");
+    expect(formatRate(5)).toBe("0,05");
+  });
+  it("parses Icelandic and English input", () => {
+    expect(parseKr("2.801,87")).toBe(2801.87);
+    expect(parseKr("2801,87")).toBe(2801.87);
+    expect(parseKr("2801.87")).toBe(2801.87);
+    expect(parseKr(" 2 801,87 kr ")).toBe(2801.87);
+    expect(parseKr("481.921")).toBe(481921);
+    expect(parseKr("520000")).toBe(520000);
+    expect(parseKr("2801,875")).toBeNaN();
+    expect(parseKr("abc")).toBeNaN();
+  });
+});

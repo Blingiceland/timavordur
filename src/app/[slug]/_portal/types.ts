@@ -104,6 +104,8 @@ export interface PortalData {
   memberships?: Membership[];
   groupCompanies?: { slug: string; name: string }[];
   manageableCompanies?: string[];
+  /** Owner's first-steps checklist (null when hidden). */
+  onboarding?: { businessType: boolean; network: boolean; staffJoined: boolean; staffApproved: boolean; terms: boolean; schedule: boolean } | null;
 }
 
 export interface Membership {

@@ -11,6 +11,7 @@ export function StaffFormFields({ form, onChange, lang, isOwner, pinAccount = fa
 }) {
   const fields: [keyof TeamMember, string, string, string][] = [
     ["name", "Fullt nafn", "Full name", "Jón Jónsson"],
+    ["email", "Netfang", "E-mail", "nafn@dæmi.is"],
     ["ssn", "Kennitala", "ID number", "1234567890"],
     ["phone", "Símanúmer", "Phone", "8001234"],
     ["address", "Heimilisfang", "Address", "Laugavegur 1"],
