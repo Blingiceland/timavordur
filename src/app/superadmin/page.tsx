@@ -45,6 +45,32 @@ Skrifaðu slóðarheitið (${slug}) til að staðfesta:`);
     setCompanies((prev) => prev.filter((c) => c.slug !== slug));
   };
 
+  const handleReview = async (slug: string, name: string, review: "approve" | "reject" | "request_info") => {
+    if (!superAdmin) return;
+    let message = "";
+    if (review === "request_info") {
+      message = prompt(`Hvaða upplýsingar vantar frá ${name}? Eigandinn fær þetta í pósti og svarar þér beint.`)?.trim() ?? "";
+      if (!message) return;
+    }
+    if (review === "reject") {
+      const m = prompt(`Hafna ${name}? Skráningunni er eytt og eigandinn fær póst.
+Ástæða (valfrjálst, fer í póstinn):`);
+      if (m === null) return;
+      message = m.trim();
+    }
+    if (review === "approve" && !confirm(`Samþykkja ${name}? Eigandinn fær póst og getur byrjað strax.`)) return;
+    const res = await fetch("/api/superadmin/company", {
+      method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${superAdmin.token}` },
+      body: JSON.stringify({ slug, review, message }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(`Villa: ${data.error || res.status}`); return; }
+    if (data.mailed === false) alert("Athugið: póstur til eiganda fór ekki.");
+    if (review === "reject") setCompanies((prev) => prev.filter((c) => c.slug !== slug));
+    else if (review === "approve") setCompanies((prev) => prev.map((c) => (c.slug === slug ? { ...c, status: "active" } : c)));
+    else alert("Fyrirspurn send.");
+  };
+
   const handleSuspend = async (slug: string, suspend: boolean, name: string) => {
     if (!superAdmin) return;
     if (suspend && !confirm(`Loka aðgangi ${name}? Enginn getur skráð sig inn fyrr en opnað er aftur. Gögn haldast.`)) return;
@@ -426,12 +452,17 @@ Skrifaðu slóðarheitið (${slug}) til að staðfesta:`);
                     <td style={{ fontSize: "0.82rem" }}>{c.createdAt}</td>
                     <td style={{ fontSize: "0.82rem" }}>{c.lastActivity ? new Date(c.lastActivity).toLocaleDateString("is-IS") : "—"}</td>
                     <td>
-                      <span className={`badge ${c.status !== "suspended" ? "badge--success" : "badge--danger"}`}>
-                        {c.status !== "suspended" ? "Virkt" : "Lokað"}
+                      <span className={`badge ${c.status === "pending_review" ? "badge--warning" : c.status === "suspended" ? "badge--danger" : "badge--success"}`}>
+                        {c.status === "pending_review" ? "Bíður samþykkis" : c.status === "suspended" ? "Lokað" : "Virkt"}
                       </span>
                       {c.deleteAfter && <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 4 }}>Eigandi lokaði · eyða má eftir {c.deleteAfter}</div>}
                     </td>
-                    <td style={{ display: "flex", gap: 6 }}>
+                    <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {c.status === "pending_review" ? (<>
+                        <button className="btn btn--primary btn--sm" onClick={() => handleReview(c.slug, c.name, "approve")}>Samþykkja</button>
+                        <button className="btn btn--secondary btn--sm" onClick={() => handleReview(c.slug, c.name, "request_info")}>Óska upplýsinga</button>
+                        <button className="btn btn--ghost btn--sm" style={{ color: "var(--danger)" }} onClick={() => handleReview(c.slug, c.name, "reject")}>Hafna</button>
+                      </>) : (<>
                       <button
                         className="btn btn--ghost btn--sm"
                         style={{ color: c.status === "suspended" ? "var(--accent)" : "var(--danger)" }}
@@ -444,6 +475,7 @@ Skrifaðu slóðarheitið (${slug}) til að staðfesta:`);
                           Eyða
                         </button>
                       )}
+                      </>)}
                       <button
                         className="btn btn--secondary btn--sm"
                         onClick={() => { setEditCompany(c); setEditAdminEmail(""); setEditError(""); }}

@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { Showcase } from "./_home/Showcase";
 
-const CONTACT_EMAIL = "jonb.steinsson@gmail.com";
-
 const FEATURES = [
   {
     icon: "⏱",
@@ -220,7 +218,7 @@ export default function LandingPage() {
             <Link href="/skilmalar">Skilmálar</Link>
             <Link href="/vinnslusamningur">Vinnslusamningur</Link>
             <Link href="/personuvernd">Persónuvernd</Link>
-            <a href={`mailto:${CONTACT_EMAIL}`}>Hafa samband</a>
+            <Link href="/hafa-samband">Hafa samband</Link>
           </div>
         </div>
       </footer>

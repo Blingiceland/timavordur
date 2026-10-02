@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { onAuthStateChanged, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, type User } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
 import { isKennitala, isValidSlug } from "@/lib/onboarding";
@@ -11,7 +10,7 @@ type Lang = "is" | "en";
 
 const T = {
   is: {
-    title: "Byrjaðu að nota Tímavörð", lead: "Skráðu staðinn þinn — það tekur tvær mínútur og er frítt.",
+    title: "Byrjaðu að nota Tímavörð", lead: "Skráðu staðinn þinn — það tekur tvær mínútur og er frítt. Við förum yfir skráninguna og opnum aðganginn.",
     google: "Halda áfram með Google", googleNote: "Eigandi eða stjórnandi skráir staðinn með Google-aðgangi. Starfsfólk skráir sig síðar með notendanafni og PIN.",
     name: "Nafn staðar", slug: "Slóð", kt: "Kennitala rekstraraðila", type: "Tegund reksturs", bar: "Krá / skemmtistaður", restaurant: "Veitingastaður",
     phone: "Símanúmer", owner: "Nafnið þitt", authorized: "Ég er í forsvari fyrir rekstraraðilann eða hef umboð hans.",
@@ -21,7 +20,7 @@ const T = {
     signedInAs: "Innskráð(ur) sem", other: "Annar aðgangur", privacy: "Persónuvernd",
   },
   en: {
-    title: "Start using Tímavörður", lead: "Register your venue — it takes two minutes and it's free.",
+    title: "Start using Tímavörður", lead: "Register your venue — it takes two minutes and it's free. We review the registration and open access.",
     google: "Continue with Google", googleNote: "The owner or a manager registers the venue with a Google account. Staff sign up later with a username and PIN.",
     name: "Venue name", slug: "Address", kt: "Company ID (kennitala)", type: "Business type", bar: "Bar / nightclub", restaurant: "Restaurant",
     phone: "Phone", owner: "Your name", authorized: "I represent the business or am authorised by it.",
@@ -53,7 +52,7 @@ export default function StartPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const router = useRouter();
+  const [done, setDone] = useState(false);
 
   useEffect(() => {
     getRedirectResult(auth).catch(() => undefined);
@@ -93,7 +92,7 @@ export default function StartPage() {
         body: JSON.stringify({ ...f, kennitala: f.kennitala.replace(/\D/g, "") }),
       });
       const d = await res.json().catch(() => ({}));
-      if (res.ok) { router.push(`/${d.slug}`); return; }
+      if (res.ok) { setDone(true); return; }
       setError(ERR[d.error]?.[lang === "is" ? 0 : 1] || d.error || String(res.status));
     } catch { setError(lang === "is" ? "Netvilla — ekkert var stofnað. Reyndu aftur." : "Network error — nothing was created. Try again."); }
     finally { setBusy(false); }
@@ -113,7 +112,16 @@ export default function StartPage() {
         <h1 style={{ fontSize: "1.6rem", marginBottom: 6 }}>{t.title}</h1>
         <p className="text-secondary" style={{ marginBottom: 24 }}>{t.lead}</p>
 
-        {!ready ? null : !user ? (
+        {done ? (
+          <div className="card" role="status" style={{ padding: 28, textAlign: "center" }}>
+            <div style={{ fontSize: "2.4rem" }}>✅</div>
+            <h2 style={{ fontSize: "1.2rem" }}>{lang === "is" ? "Takk — skráningin er móttekin" : "Thanks — your registration is in"}</h2>
+            <p className="text-secondary">{lang === "is"
+              ? <>Við förum yfir hverja skráningu. Þú færð póst á <b>{user?.email}</b> um leið og aðgangurinn er opnaður, yfirleitt innan sólarhrings.</>
+              : <>We review every registration. You will get an e-mail at <b>{user?.email}</b> as soon as access is opened, usually within a day.</>}</p>
+            <p style={{ fontSize: "0.85rem" }}><Link href="/hafa-samband">{lang === "is" ? "Spurningar? Hafðu samband" : "Questions? Contact us"}</Link></p>
+          </div>
+        ) : !ready ? null : !user ? (
           <div className="card" style={{ padding: 24, textAlign: "center" }}>
             <button className="btn btn--primary btn--lg" onClick={signIn}>{t.google}</button>
             <p className="text-muted" style={{ fontSize: "0.85rem", marginTop: 12 }}>{t.googleNote}</p>

@@ -45,7 +45,7 @@ export interface Company {
   /** LEGACY, no longer used for pay — see employmentTerms. */
   wageCategories?: WageCategory[];
   /** "suspended" = closed by superadmin; every login and API call is refused. */
-  status?: "active" | "suspended";
+  status?: "active" | "suspended" | "pending_review";
   /** How the company was created. */
   source?: "superadmin" | "self";
   plan?: "free";

@@ -4,7 +4,7 @@ export const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 
 /** Paths that are app routes or could be confused with them. */
 export const RESERVED_SLUGS = new Set([
-  "api", "admin", "superadmin", "byrja", "demo", "skilmalar", "vinnslusamningur", "personuvernd",
+  "api", "admin", "superadmin", "byrja", "hafa-samband", "contact", "demo", "skilmalar", "vinnslusamningur", "personuvernd",
   "www", "app", "static", "_next", "login", "innskraning", "signup", "skraning", "timavordur", "timon",
   "help", "hjalp", "about", "um", "verd", "pricing", "favicon.ico", "robots.txt", "sitemap.xml",
 ]);
