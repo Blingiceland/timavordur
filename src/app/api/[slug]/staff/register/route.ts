@@ -5,7 +5,7 @@ import { isAccessError, staffRef, verifyCompanyMember } from "@/lib/auth";
 import { groupCompanies, groupUsernameRef, pinAccountRef } from "@/lib/server/group";
 import { accessFail, fail, handle, HttpError, json } from "@/lib/server/http";
 import { issuePin } from "@/lib/server/pin-issue";
-import { sanitizeProfile } from "@/lib/staff-fields";
+import { missingRequired, REGISTRATION_FIELD_KEYS, sanitizeProfile } from "@/lib/staff-fields";
 import { isUsername, readJsonObject } from "@/lib/validation";
 
 // POST /api/[slug]/staff/register — the ONLY self-registration: a Google account.
@@ -37,6 +37,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
     if (!p.ok) return fail(p.error, 400);
     const email = decoded.email.toLowerCase();
     const name = (p.value.name as string) || decoded.name || email;
+    // Every chosen workplace's required fields, checked here and not only in the form.
+    const missing = REGISTRATION_FIELD_KEYS.filter((k) =>
+      targets.some((c) => missingRequired({ ...p.value, name, role: "staff" }, c.registrationFields).includes(k)));
+    if (missing.length) return fail("missing_required", 400, { fields: missing });
     const statuses: Record<string, string> = {};
     const uid = decoded.uid;
 

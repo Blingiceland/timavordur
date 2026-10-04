@@ -96,6 +96,8 @@ export interface PortalData {
   team?: TeamMember[];
   staffList?: TeamMember[];
   registrationFields?: Record<string, FieldLevel>;
+  /** Required registration fields this member has not filled in (names only). */
+  missingFields?: string[];
   requireApproval?: boolean;
   businessType?: BusinessType;
   ipRestriction?: { enabled: boolean; allowedIPs: string[] };

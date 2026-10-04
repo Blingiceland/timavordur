@@ -44,6 +44,8 @@ const ERRORS: Record<string, [string, string]> = {
   invalid_credentials: ["Rangt notendanafn eða PIN", "Wrong username or PIN"],
   too_many_attempts: ["Of margar tilraunir — reyndu aftur síðar", "Too many attempts — try again later"],
   username_taken: ["Notendanafn er þegar í notkun", "Username already taken"],
+  missing_required: ["Fylltu út alla skyldureiti", "Fill in all required fields"],
+  "ssn:invalid": ["Kennitala er ekki gild", "Invalid ID number"],
   invalid_username: ["Ógilt notendanafn (3–30 stafir: a–z, 0–9, . _ -)", "Invalid username (3–30: a–z, 0–9, . _ -)"],
   pin_must_be_4_digits: ["PIN verður að vera 4 tölustafir", "PIN must be 4 digits"],
   ip_restricted: ["Stimplun aðeins leyfð á neti vinnustaðarins", "Punching is only allowed on the workplace network"],
