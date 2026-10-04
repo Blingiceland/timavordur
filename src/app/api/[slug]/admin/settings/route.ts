@@ -5,9 +5,10 @@ import { requestIdOf, writeAudit } from "@/lib/audit";
 import { normaliseAllowList } from "@/lib/ip";
 import { accessFail, fail, handle, json } from "@/lib/server/http";
 import { companyRef } from "@/lib/server/refs";
+import { REGISTRATION_FIELD_KEYS } from "@/lib/staff-fields";
 import { isEnum, readJsonObject, unknownKeys } from "@/lib/validation";
 
-const FIELD_KEYS = ["name", "ssn", "phone", "address", "bankName", "bankAccount", "union", "pension", "workPermit", "workPermitExpiry", "jobTitle", "employmentType"];
+const FIELD_KEYS: readonly string[] = REGISTRATION_FIELD_KEYS;
 const LEVELS = ["required", "optional", "hidden"] as const;
 
 // GET — admin+ can read; PATCH — owner only (same as the Settings tab).

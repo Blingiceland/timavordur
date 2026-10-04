@@ -15,7 +15,7 @@ import { issuePin, type PinIssueResult } from "@/lib/server/pin-issue";
 import { recordPunch } from "@/lib/server/punch-service";
 import { companyRef, punchStateRef, staffCol } from "@/lib/server/refs";
 import { decideStaffAction, isRole, atLeast } from "@/lib/staff-policy";
-import { PROFILE_FIELDS, sanitizeProfile } from "@/lib/staff-fields";
+import { missingRequired, PROFILE_FIELDS, sanitizeProfile } from "@/lib/staff-fields";
 import type { Company, Role } from "@/lib/types";
 import { cleanStr, isDocId, isEnum, isIdempotencyKey, isPin, isUsername, readJsonObject } from "@/lib/validation";
 
@@ -111,6 +111,8 @@ export async function GET(req: NextRequest, { params }: Ctx) {
       registered: true, status: "approved", role, name: staff.name, companyName: company.name, isPinSession: !!decoded.tv_pin,
       isPunchedIn: here?.isPunchedIn ?? false, todayHours: today.hours, periodHours: per.hours, shifts: per.shifts, periodKey: period.key,
       memberships: mine, groupCompanies: groupList,
+      // Required registration fields this member still has to fill in (names only).
+      missingFields: missingRequired(staff, company.registrationFields),
     };
     if (!atLeast(role, "manager")) return json(base);
 

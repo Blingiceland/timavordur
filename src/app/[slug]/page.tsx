@@ -14,6 +14,7 @@ import {
 } from "./_portal/constants";
 import { StaffFormFields } from "./_portal/StaffFormFields";
 import { DataControls } from "./_portal/DataControls";
+import { CompleteProfile } from "./_portal/CompleteProfile";
 import { OnboardingCard, type OnboardingState } from "./_portal/Onboarding";
 
 export default function CompanyPortal() {
@@ -142,6 +143,9 @@ export default function CompanyPortal() {
   // tab, and single-tab staff have no tab bar to switch back with.
   // Also drop the previous user's portal data so no request runs with a stale status.
   useEffect(() => { setTab("clock"); setPortal(null); setAllShifts([]); setSwaps([]); setCorrections([]); }, [user?.uid]);
+  // Until required profile fields are filled in, only the clock is available.
+  const mustComplete = (portal?.missingFields?.length ?? 0) > 0;
+  useEffect(() => { if (mustComplete) setTab("clock"); }, [mustComplete]);
 
   // Fetch the full upcoming schedule (next 3 weeks) — used by the clock tab's
   // "my shifts" and the swaps tab.
@@ -652,7 +656,7 @@ export default function CompanyPortal() {
       { key: "staff" as Tab, label: t.tabStaff, show: canManage },
       { key: "settings" as Tab, label: t.tabSettings, show: isOwner },
     ] as { key: Tab; label: string; show: boolean }[]
-  ).filter(tb => tb.show).map(({ key, label }) => ({ key, label }));
+  ).filter(tb => tb.show && (!mustComplete || tb.key === "clock")).map(({ key, label }) => ({ key, label }));
 
   return (
     <div className="page" style={{ minHeight: "100vh" }}><Navbar />
@@ -695,7 +699,7 @@ export default function CompanyPortal() {
         )}
 
         {/* Quick nav (manager+) */}
-        {canSeeTeam && (
+        {canSeeTeam && !mustComplete && (
           <div style={{ display: "flex", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
             {[
               { href: `/${slug}/timesheets`, icon: "📊", labelIs: "Tímaskýrslur", labelEn: "Timesheets" },
@@ -755,6 +759,11 @@ export default function CompanyPortal() {
               </fieldset>
             )}
             {openPlace && multiPlace && <div style={{ fontWeight: 600 }}>{lang === "is" ? `Inni á ${openPlace.name}` : `Clocked in at ${openPlace.name}`}</div>}
+            {mustComplete && (
+              <a href="#ljuka-skraningu" style={{ color: "#f0a500", fontSize: "0.9rem", fontWeight: 600 }}>
+                ⚠️ {lang === "en" ? "Your registration is incomplete — see below" : "Skráningin þín er ekki fullgerð — sjá neðar"}
+              </a>
+            )}
             <button onClick={doPunch} disabled={punching || (multiPlace && !openPlace && !punchSlug)} className={`punch-btn ${openPlace ? "punch-btn--out" : ""}`}>
               <span style={{ fontSize: "1.8rem" }}>{openPlace ? "⏹" : "▶"}</span>
               <span>{punching ? "..." : openPlace ? t.punchOut : t.punchIn}</span>
@@ -764,6 +773,10 @@ export default function CompanyPortal() {
                 <div key={l} style={{ textAlign: "center" }}><div style={{ fontSize: "1.8rem", color: c, fontWeight: 700 }}>{v}</div><div className="text-muted" style={{ fontSize: "0.82rem" }}>{l}</div></div>
               ))}
             </div>
+            {mustComplete && (
+              <CompleteProfile user={user} slug={slug} lang={lang === "en" ? "en" : "is"} missing={portal.missingFields ?? []}
+                onSaved={async () => { await fetchPortal(); showMsg(lang === "en" ? "✅ Registration complete" : "✅ Skráningu lokið", true); }} />
+            )}
             {myUpcoming.length > 0 && (
               <div className="card" style={{ width: "100%", maxWidth: 440, padding: "16px 20px" }}>
                 <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
@@ -783,11 +796,13 @@ export default function CompanyPortal() {
                 </div>
               </div>
             )}
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
-              <a href={`/${slug}/timesheets`} className="btn btn--secondary btn--sm">📊 {lang === "is" ? "Tímaskýrslur" : "Timesheets"}</a>
-              <a href={`/${slug}/schedule`} className="btn btn--secondary btn--sm">🗓 {lang === "is" ? "Vaktaplan" : "Schedule"}</a>
-              <a href={`/${slug}/rates`} className="btn btn--secondary btn--sm">📑 {lang === "is" ? "Mín kjör" : "My terms"}</a>
-            </div>
+            {!mustComplete && (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+                <a href={`/${slug}/timesheets`} className="btn btn--secondary btn--sm">📊 {lang === "is" ? "Tímaskýrslur" : "Timesheets"}</a>
+                <a href={`/${slug}/schedule`} className="btn btn--secondary btn--sm">🗓 {lang === "is" ? "Vaktaplan" : "Schedule"}</a>
+                <a href={`/${slug}/rates`} className="btn btn--secondary btn--sm">📑 {lang === "is" ? "Mín kjör" : "My terms"}</a>
+              </div>
+            )}
           </div>
         )}
 
