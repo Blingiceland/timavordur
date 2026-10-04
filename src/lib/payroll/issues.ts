@@ -15,6 +15,8 @@ export type IssueCode =
   | "personal_below_minimum"
   | "override_below_entitlement"
   | "unsupported_agreement"
+  | "custom_missing_pay"
+  | "custom_missing_rates"
   | "unsupported_pay_type"
   | "monthly_missing_salary"
   | "monthly_partial_period"
@@ -50,6 +52,8 @@ export const ISSUE_TEXT: Record<IssueCode, { is: string; en: string }> = {
   personal_below_minimum: { is: "Persónulegur taxti undir samningslágmarki — lágmark notað", en: "Personal rate below agreement minimum — minimum used" },
   override_below_entitlement: { is: "Handvirkt þrep lægra en réttindi — hunsað", en: "Manual step below entitlement — ignored" },
   unsupported_agreement: { is: "Kjarasamningur ekki studdur í launavél", en: "Agreement not supported by the engine" },
+  custom_missing_pay: { is: "Sérkjör: persónulegan taxta eða mánaðarlaun vantar", en: "Custom terms: personal rate or monthly salary missing" },
+  custom_missing_rates: { is: "Sérkjör: álagsprósentur vantar", en: "Custom terms: premium percentages missing" },
   unsupported_pay_type: { is: "Launategund ekki útfærð (averaged)", en: "Pay type not implemented (averaged)" },
   monthly_missing_salary: { is: "Mánaðarlaun vantar", en: "Monthly salary missing" },
   monthly_partial_period: { is: "Mánaðarlaun hluta tímabils — hlutfallsreglu þarf að staðfesta", en: "Partial-period monthly salary — proration rule needs confirmation" },

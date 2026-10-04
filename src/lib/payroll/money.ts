@@ -52,3 +52,24 @@ export function formatKr(cents: number): string {
   const grouped = String(kr).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return `${neg ? "-" : ""}${grouped},${aur}`;
 }
+
+/** Hourly rate without thousands separator, e.g. 280187 → "2801,87" (pastes cleanly into inputs). */
+export function formatRate(cents: number): string {
+  const neg = cents < 0;
+  const abs = Math.abs(cents);
+  return `${neg ? "-" : ""}${Math.floor(abs / 100)},${String(abs % 100).padStart(2, "0")}`;
+}
+
+/**
+ * Parse an amount typed or pasted in Icelandic or English form:
+ * "2.801,87", "2801,87", "2801.87", "2 801,87 kr", "481.921" → number (kr), or NaN.
+ */
+export function parseKr(input: string): number {
+  let s = input.replace(/kr\.?/gi, "").replace(/[\s ]/g, "");
+  if (!s) return NaN;
+  if (s.includes(",") && s.includes(".")) s = s.replace(/\./g, "").replace(",", ".");
+  else if (s.includes(",")) s = s.replace(",", ".");
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");
+  if (!/^-?\d+(\.\d{1,2})?$/.test(s)) return NaN;
+  return Number(s);
+}

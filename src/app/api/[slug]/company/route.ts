@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getCompanyBySlug } from "@/lib/auth";
+import { blockedStatus, getCompanyBySlug } from "@/lib/auth";
 import { groupCompanies } from "@/lib/server/group";
 import { fail, handle, json } from "@/lib/server/http";
 
@@ -9,7 +9,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ slu
   const { slug } = await params;
   return handle("company GET", { slug }, async () => {
     const company = await getCompanyBySlug(slug);
-    if (!company) return fail("not_found", 404);
+    if (!company) {
+      const blocked = await blockedStatus(slug);
+      return blocked ? fail(blocked, 403) : fail("not_found", 404);
+    }
     const group = await groupCompanies(company.groupId);
     return json({
       id: company.id, name: company.name, slug: company.slug,

@@ -9,7 +9,7 @@ import type { Issue } from "./issues";
 import { amountForDuration, divRoundHalfUp, krToCents } from "./money";
 import { pairPunches, type PayPeriod, type PunchLite } from "./punches";
 import { resolveRates, type RateResolution } from "./rates";
-import { orlofBasisPoints, termsForDate, type EmploymentTerms } from "./terms";
+import { orlofBasisPoints, termsForDate, type CustomRates, type EmploymentTerms } from "./terms";
 
 export const ENGINE_VERSION = "2026.10.0";
 
@@ -97,6 +97,18 @@ function label(kind: LineKind, overtime: boolean, pct: number): { is: string; en
 
 const ymd = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
+function customPct(kind: Slice["kind"], c: CustomRates): number {
+  switch (kind) {
+    case "evening": return c.eveningPct;
+    case "night":
+    case "weekend": return c.nightWeekendPct;
+    case "bar_night": return c.barNightPct;
+    case "helgidagur": return c.helgidagurPct;
+    case "storhatid": return c.storhatidPct;
+    default: return 0;
+  }
+}
+
 function dedupeIssues(issues: Issue[]): Issue[] {
   const seen = new Set<string>();
   return issues.filter((i) => {
@@ -165,6 +177,8 @@ export function calculateEmployeePeriod(input: CalculationInput): EmployeeCalcul
     if (res.ok) {
       issues.push(...res.rates.issues);
       const r = res.rates;
+      // Custom terms: same time windows, the employer's own percentages.
+      const sp = r.terms.agreementId === "custom" && r.terms.customRates ? customPct(s.kind, r.terms.customRates) : s.pct;
       const isOt = s.overtime || s.kind === "day_overtime";
       if (payType === "averaged") {
         issues.push({ code: "unsupported_pay_type", severity: "blocker", date });
@@ -172,19 +186,19 @@ export function calculateEmployeePeriod(input: CalculationInput): EmployeeCalcul
         issues.push({ code: "day_arrangement_storhatid", severity: "blocker", date });
       } else if (isOt) {
         // Overtime; for shift/casual work never pay less than the premium that would have applied.
-        const premium = s.kind === "day_overtime" ? 0 : r.premiumCents(s.pct);
+        const premium = s.kind === "day_overtime" ? 0 : r.premiumCents(sp);
         rateCents = Math.max(r.overtimeCents, premium);
         amountCents = amountForDuration(rateCents, durationMs);
         kind = s.kind === "day_overtime" ? "day_overtime" : s.kind;
       } else if (payType === "monthly") {
         // Base hours are covered by the monthly salary; only the premium part is paid.
-        rateCents = r.premiumCents(s.pct) - r.dayCents;
+        rateCents = r.premiumCents(sp) - r.dayCents;
         amountCents = amountForDuration(rateCents, durationMs);
       } else {
-        rateCents = s.pct === 0 ? r.dayCents : r.premiumCents(s.pct);
+        rateCents = sp === 0 ? r.dayCents : r.premiumCents(sp);
         amountCents = amountForDuration(rateCents, durationMs);
       }
-      if (isOt) pct = 0;
+      pct = isOt ? 0 : sp;
     } else {
       issues.push(...res.issues);
     }

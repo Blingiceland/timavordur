@@ -1,123 +1,62 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import { verifySuperAdmin } from "@/lib/auth";
-import { FieldValue } from "firebase-admin/firestore";
-import type { Company } from "@/lib/types";
-import { reportApiError } from "@/lib/report-error";
+import { requestIdOf } from "@/lib/audit";
+import { slugify } from "@/lib/onboarding";
+import { createCompany } from "@/lib/server/company-create";
+import { fail, handle, json } from "@/lib/server/http";
+import { readJsonObject } from "@/lib/validation";
 
-// Slug must be a short, url-safe, lowercase identifier (used as /[slug] path).
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
-
-// GET /api/companies — list all companies (superadmin only)
+// GET /api/companies — all companies with status and activity (superadmin only)
 export async function GET(req: NextRequest) {
-  if (!(await verifySuperAdmin(req))) {
-    return NextResponse.json({ error: "Ekki superadmin" }, { status: 403 });
-  }
-  try {
-    const snap = await adminDb
-      .collection("tv_companies")
-      .orderBy("createdAt", "desc")
-      .get();
-
-    const companies: Partial<Company>[] = [];
-    for (const doc of snap.docs) {
-      const data = doc.data();
-      const staffSnap = await adminDb
-        .collection("tv_companies")
-        .doc(doc.id)
-        .collection("staff")
-        .count()
-        .get();
-
-      companies.push({
-        id: doc.id,
-        name: data.name,
-        slug: data.slug,
-        adminEmails: data.adminEmails || [],
-        active: data.active ?? true,
-        createdAt: data.createdAt,
-        kennitala: data.kennitala || "",
-        groupId: data.groupId || doc.id,
-        staffCount: staffSnap.data().count,
-      } as Partial<Company> & { staffCount: number });
-    }
-
-    return NextResponse.json({ companies });
-  } catch (err) {
-    await reportApiError("companies GET", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+  return handle("companies GET", {}, async () => {
+    if (!(await verifySuperAdmin(req))) return fail("not_superadmin", 403);
+    const snap = await adminDb.collection("tv_companies").orderBy("createdAt", "desc").get();
+    const companies = await Promise.all(snap.docs.map(async (doc) => {
+      const d = doc.data();
+      const [staff, last] = await Promise.all([
+        doc.ref.collection("staff").count().get(),
+        doc.ref.collection("punchRecords").orderBy("timestamp", "desc").limit(1).get(),
+      ]);
+      return {
+        id: doc.id, name: d.name, slug: d.slug, adminEmails: d.adminEmails || [], active: d.active ?? true,
+        status: d.status === "suspended" || d.status === "pending_review" ? d.status : "active", source: d.source || "superadmin",
+        createdAt: d.createdAt, kennitala: d.kennitala || "", contactPhone: d.contactPhone || "",
+        groupId: d.groupId || doc.id, staffCount: staff.data().count, deleteAfter: d.deleteAfter ?? null,
+        lastActivity: last.empty ? null : last.docs[0].data().timestamp?.toDate?.().toISOString() ?? null,
+      };
+    }));
+    return json({ companies });
+  });
 }
 
-// POST /api/companies — create new company (superadmin only)
+// POST /api/companies — create a company with an owner invite (superadmin only)
 export async function POST(req: NextRequest) {
-  if (!(await verifySuperAdmin(req))) {
-    return NextResponse.json({ error: "Ekki superadmin" }, { status: 403 });
-  }
-  try {
-    const { name, slug, adminEmail, kennitala, linkToSlug } = await req.json();
+  return handle("companies POST", {}, async () => {
+    const su = await verifySuperAdmin(req);
+    if (!su) return fail("not_superadmin", 403);
+    const b = await readJsonObject(req);
+    if (!b) return fail("invalid_body", 400);
+    const name = typeof b.name === "string" ? b.name.trim().slice(0, 80) : "";
+    const slug = typeof b.slug === "string" && b.slug ? b.slug.trim().toLowerCase() : slugify(name);
+    const adminEmail = typeof b.adminEmail === "string" ? b.adminEmail.trim().toLowerCase() : "";
+    if (!name || !adminEmail.includes("@")) return fail("name_and_admin_email_required", 400);
 
-    if (!name || !slug || !adminEmail) {
-      return NextResponse.json({ error: "Vantar nafn, slug eða admin-netfang" }, { status: 400 });
-    }
-    if (typeof slug !== "string" || !SLUG_RE.test(slug)) {
-      return NextResponse.json(
-        { error: "Slug má aðeins innihalda lágstafi, tölur og bandstrik (2–40 stafir)" },
-        { status: 400 }
-      );
-    }
-    if (typeof adminEmail !== "string" || !adminEmail.includes("@")) {
-      return NextResponse.json({ error: "Ógilt admin-netfang" }, { status: 400 });
-    }
-
-    // Slug must be unique
-    const existing = await adminDb
-      .collection("tv_companies")
-      .where("slug", "==", slug)
-      .get();
-    if (!existing.empty) {
-      return NextResponse.json({ error: "Slug er þegar í notkun" }, { status: 409 });
-    }
-
-    // Optional: join the group of an existing company (shared staff logins).
     let groupId: string | null = null;
-    if (linkToSlug) {
-      const other = await adminDb.collection("tv_companies").where("slug", "==", String(linkToSlug)).limit(1).get();
-      if (other.empty) return NextResponse.json({ error: "Fyrirtæki til að tengja við fannst ekki" }, { status: 404 });
+    if (typeof b.linkToSlug === "string" && b.linkToSlug) {
+      const other = await adminDb.collection("tv_companies").where("slug", "==", b.linkToSlug).limit(1).get();
+      if (other.empty) return fail("link_target_not_found", 404);
       groupId = (other.docs[0].data().groupId as string) || other.docs[0].id;
       if (!other.docs[0].data().groupId) await other.docs[0].ref.update({ groupId });
     }
-
-    const createdAt = new Date().toISOString().slice(0, 10);
-    const newRef = adminDb.collection("tv_companies").doc();
-    await newRef.set({
-      groupId: groupId ?? newRef.id,
-      name,
-      slug,
-      kennitala: kennitala || "",
-      adminEmails: [adminEmail.trim().toLowerCase()],
-      active: true,
-      requireApproval: true,
-      registrationFields: {},
-      ipRestriction: { enabled: false, allowedIPs: [] },
-      createdAt,
-      createdTimestamp: FieldValue.serverTimestamp(),
+    const created = await createCompany({
+      name, slug, kennitala: typeof b.kennitala === "string" && b.kennitala.trim() ? b.kennitala : null,
+      businessType: b.businessType === "restaurant" ? "restaurant" : "bar", source: "superadmin",
+      adminEmail, groupId, createdBy: su.uid, requestId: requestIdOf(req),
     });
-    const docRef = newRef;
-
-    return NextResponse.json({
-      id: docRef.id,
-      groupId: groupId ?? docRef.id,
-      name,
-      slug,
-      kennitala: kennitala || "",
-      adminEmails: [adminEmail.trim().toLowerCase()],
-      active: true,
-      createdAt,
-      staffCount: 0,
+    return json({
+      id: created.id, name, slug: created.slug, adminEmails: [adminEmail], active: true, status: "active", source: "superadmin",
+      createdAt: new Date().toISOString().slice(0, 10), groupId: created.groupId, staffCount: 0, lastActivity: null,
     });
-  } catch (err) {
-    await reportApiError("companies POST", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
-  }
+  });
 }

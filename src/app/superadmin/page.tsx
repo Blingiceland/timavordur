@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { signOut } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import type { Company } from "@/lib/types";
+import { loginUrlFor, PRODUCT_HOST } from "@/lib/branded-hosts";
 
 interface SuperAdminUser {
   uid: string;
@@ -28,6 +29,60 @@ export default function SuperAdminPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
   const [linkTarget, setLinkTarget] = useState("");
+
+  // Close or reopen a company (data kept; all logins refused while closed).
+  const handlePurge = async (slug: string, name: string) => {
+    if (!superAdmin) return;
+    const typed = prompt(`EYÐA ${name} VARANLEGA? Öll gögn, stimplanir og innskráningar hverfa og þetta er ekki hægt að afturkalla.
+Skrifaðu slóðarheitið (${slug}) til að staðfesta:`);
+    if (typed !== slug) return;
+    const res = await fetch("/api/superadmin/company", {
+      method: "DELETE", headers: { "Content-Type": "application/json", Authorization: `Bearer ${superAdmin.token}` },
+      body: JSON.stringify({ slug, confirmSlug: typed }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(data.error === "retention_period" ? `Eigandi lokaði — ekki má eyða fyrr en ${data.deleteAfter}.` : `Villa: ${data.error || res.status}`); return; }
+    setCompanies((prev) => prev.filter((c) => c.slug !== slug));
+  };
+
+  const handleReview = async (slug: string, name: string, review: "approve" | "reject" | "request_info") => {
+    if (!superAdmin) return;
+    let message = "";
+    if (review === "request_info") {
+      message = prompt(`Hvaða upplýsingar vantar frá ${name}? Eigandinn fær þetta í pósti og svarar þér beint.`)?.trim() ?? "";
+      if (!message) return;
+    }
+    if (review === "reject") {
+      const m = prompt(`Hafna ${name}? Skráningunni er eytt og eigandinn fær póst.
+Ástæða (valfrjálst, fer í póstinn):`);
+      if (m === null) return;
+      message = m.trim();
+    }
+    if (review === "approve" && !confirm(`Samþykkja ${name}? Eigandinn fær póst og getur byrjað strax.`)) return;
+    const res = await fetch("/api/superadmin/company", {
+      method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${superAdmin.token}` },
+      body: JSON.stringify({ slug, review, message }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(`Villa: ${data.error || res.status}`); return; }
+    if (data.mailed === false) alert("Athugið: póstur til eiganda fór ekki.");
+    if (review === "reject") setCompanies((prev) => prev.filter((c) => c.slug !== slug));
+    else if (review === "approve") setCompanies((prev) => prev.map((c) => (c.slug === slug ? { ...c, status: "active" } : c)));
+    else alert("Fyrirspurn send.");
+  };
+
+  const handleSuspend = async (slug: string, suspend: boolean, name: string) => {
+    if (!superAdmin) return;
+    if (suspend && !confirm(`Loka aðgangi ${name}? Enginn getur skráð sig inn fyrr en opnað er aftur. Gögn haldast.`)) return;
+    const res = await fetch("/api/superadmin/company", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${superAdmin.token}` },
+      body: JSON.stringify({ slug, suspend }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { alert(`Villa: ${data.error || res.status}`); return; }
+    setCompanies((prev) => prev.map((c) => (c.slug === slug ? { ...c, status: data.status, ...(suspend ? {} : { deleteAfter: null }) } : c)));
+  };
 
   const handleLink = async (slug: string, linkToSlug: string) => {
     if (!superAdmin) return;
@@ -334,7 +389,7 @@ export default function SuperAdminPage() {
                   }}
                 >
                   🔗 Hlekkur:{" "}
-                  <strong className="text-brand">timon.bling.is/{newForm.slug}</strong>
+                  <strong className="text-brand">{PRODUCT_HOST}/{newForm.slug}</strong>
                 </div>
               )}
 
@@ -369,6 +424,7 @@ export default function SuperAdminPage() {
                   <th>Admin</th>
                   <th>Starfsfólk</th>
                   <th>Stofnað</th>
+                  <th>Síðasta stimplun</th>
                   <th>Staða</th>
                   <th></th>
                 </tr>
@@ -383,8 +439,8 @@ export default function SuperAdminPage() {
                     </td>
                     <td>
                       <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                        <span className="text-brand" style={{ fontSize: "0.82rem" }}>/{c.slug}/staff</span>
-                        <span className="text-secondary" style={{ fontSize: "0.82rem" }}>/{c.slug}/admin</span>
+                        <a className="text-brand" style={{ fontSize: "0.82rem" }} href={loginUrlFor(c.slug)} target="_blank" rel="noreferrer">{loginUrlFor(c.slug).replace("https://", "")}</a>
+                        <span className="text-secondary" style={{ fontSize: "0.78rem" }}>{c.source === "self" ? "Sjálfsskráð" : "Stofnað af superadmin"}{c.kennitala ? ` · kt. ${c.kennitala}` : ""}{c.contactPhone ? ` · ${c.contactPhone}` : ""}</span>
                       </div>
                     </td>
                     <td style={{ fontSize: "0.85rem" }}>{c.adminEmails?.[0] || "—"}</td>
@@ -394,12 +450,32 @@ export default function SuperAdminPage() {
                       </span>
                     </td>
                     <td style={{ fontSize: "0.82rem" }}>{c.createdAt}</td>
+                    <td style={{ fontSize: "0.82rem" }}>{c.lastActivity ? new Date(c.lastActivity).toLocaleDateString("is-IS") : "—"}</td>
                     <td>
-                      <span className={`badge ${c.active ? "badge--success" : "badge--danger"}`}>
-                        {c.active ? "Virkt" : "Óvirkt"}
+                      <span className={`badge ${c.status === "pending_review" ? "badge--warning" : c.status === "suspended" ? "badge--danger" : "badge--success"}`}>
+                        {c.status === "pending_review" ? "Bíður samþykkis" : c.status === "suspended" ? "Lokað" : "Virkt"}
                       </span>
+                      {c.deleteAfter && <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 4 }}>Eigandi lokaði · eyða má eftir {c.deleteAfter}</div>}
                     </td>
-                    <td>
+                    <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {c.status === "pending_review" ? (<>
+                        <button className="btn btn--primary btn--sm" onClick={() => handleReview(c.slug, c.name, "approve")}>Samþykkja</button>
+                        <button className="btn btn--secondary btn--sm" onClick={() => handleReview(c.slug, c.name, "request_info")}>Óska upplýsinga</button>
+                        <button className="btn btn--ghost btn--sm" style={{ color: "var(--danger)" }} onClick={() => handleReview(c.slug, c.name, "reject")}>Hafna</button>
+                      </>) : (<>
+                      <button
+                        className="btn btn--ghost btn--sm"
+                        style={{ color: c.status === "suspended" ? "var(--accent)" : "var(--danger)" }}
+                        onClick={() => handleSuspend(c.slug, c.status !== "suspended", c.name)}
+                      >
+                        {c.status === "suspended" ? "Opna" : "Loka"}
+                      </button>
+                      {c.status === "suspended" && (
+                        <button className="btn btn--ghost btn--sm" style={{ color: "var(--danger)" }} onClick={() => handlePurge(c.slug, c.name)}>
+                          Eyða
+                        </button>
+                      )}
+                      </>)}
                       <button
                         className="btn btn--secondary btn--sm"
                         onClick={() => { setEditCompany(c); setEditAdminEmail(""); setEditError(""); }}
@@ -499,8 +575,8 @@ export default function SuperAdminPage() {
 
             <div style={{ borderTop: "1px solid var(--border)", paddingTop: "16px", display: "flex", gap: "8px" }}>
               <div style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
-                <div>🔗 Hlekkur: <strong>timon.bling.is/{editCompany.slug}</strong></div>
-                <div>🔐 Admin: <strong>timon.bling.is/superadmin</strong></div>
+                <div>🔗 Hlekkur: <strong>{loginUrlFor(editCompany.slug)}</strong></div>
+                <div>🔐 Admin: <strong>{PRODUCT_HOST}/superadmin</strong></div>
               </div>
             </div>
           </div>

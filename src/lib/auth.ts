@@ -59,6 +59,8 @@ export async function getCompanyBySlug(slug: string): Promise<Company | null> {
   if (!SLUG_RE.test(slug)) return null;
   const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).where("active", "==", true).limit(2).get();
   if (snap.size !== 1) return null; // missing, or an ambiguous duplicate slug
+  const status = snap.docs[0].data().status;
+  if (status === "suspended" || status === "pending_review") return null; // closed, or not yet approved: no access at all
   return companyFromDoc(snap.docs[0].id, snap.docs[0].data());
 }
 
@@ -101,9 +103,9 @@ export function pinSessionError(
   return null;
 }
 
-export function effectiveRole(staff: FirebaseFirestore.DocumentData): Role {
+export function effectiveRole(staff: FirebaseFirestore.DocumentData, pinSession = false): Role {
   const role: Role = isRole(staff.role) ? staff.role : "staff";
-  if (staff.authType === "password" && ROLE_LEVEL[role] > ROLE_LEVEL[MAX_PIN_ROLE]) return MAX_PIN_ROLE;
+  if ((pinSession || staff.authType === "password") && ROLE_LEVEL[role] > ROLE_LEVEL[MAX_PIN_ROLE]) return MAX_PIN_ROLE;
   return role;
 }
 
@@ -118,7 +120,10 @@ export async function verifyCompanyMember(req: NextRequest, slug: string): Promi
   const decoded = await verifyToken(req);
   if (!decoded) return { error: "unauthorized", status: 401 };
   const company = await getCompanyBySlug(slug);
-  if (!company) return { error: "company_not_found", status: 404 };
+  if (!company) {
+    const blocked = await blockedStatus(slug);
+    return blocked ? { error: blocked, status: 403 } : { error: "company_not_found", status: 404 };
+  }
   if (decoded.tv_pin && decoded.tv_group !== company.groupId) return { error: "wrong_tenant", status: 403 };
   const [doc, pinDoc] = await Promise.all([
     staffRef(company.id, decoded.uid).get(),
@@ -149,7 +154,7 @@ export async function verifyCompanyRole(req: NextRequest, slug: string, minRole:
   if (!m.staff) return { error: "not_registered", status: 403 };
   const status = m.staff.status;
   if (status !== "approved") return { error: typeof status === "string" ? status : "status_missing", status: 403 };
-  const role = effectiveRole(m.staff);
+  const role = effectiveRole(m.staff, !!m.decoded.tv_pin);
   if (!atLeast(role, minRole)) return { error: "forbidden", status: 403 };
   return { decoded: m.decoded, company: m.company, role, staff: m.staff, isPinSession: !!m.decoded.tv_pin };
 }
@@ -160,4 +165,13 @@ export async function approvedOwnerCount(companyId: string, tx?: FirebaseFiresto
     .where("role", "==", "owner").where("status", "==", "approved");
   const snap = tx ? await tx.get(q) : await q.get();
   return snap.size;
+}
+
+/** Why an existing company is not accessible: closed, or awaiting the operator's approval. */
+export async function blockedStatus(slug: string): Promise<"company_suspended" | "company_pending" | null> {
+  if (!SLUG_RE.test(slug)) return null;
+  const snap = await adminDb.collection("tv_companies").where("slug", "==", slug).limit(1).get();
+  if (snap.empty) return null;
+  const status = snap.docs[0].data().status;
+  return status === "suspended" ? "company_suspended" : status === "pending_review" ? "company_pending" : null;
 }

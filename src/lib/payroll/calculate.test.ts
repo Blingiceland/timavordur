@@ -322,3 +322,46 @@ describe("planned mode (2027 preview)", () => {
     expect(r.mode).toBe("planned");
   });
 });
+
+describe("custom terms outside a supported agreement", () => {
+  const customRates = { eveningPct: 50, nightWeekendPct: 60, barNightPct: 70, helgidagurPct: 80, storhatidPct: 100, overtimePct: 100 };
+  const custom = (over: Partial<EmploymentTerms> = {}) =>
+    baseTerms({ agreementId: "custom", wageClass: null, employerStartDate: null, birthDate: null, personalDayRate: 3000, customRates, ...over });
+
+  it("prices the same time windows with the employer's own percentages", () => {
+    const r = run({ terms: [custom()], punches: [...shift("2026-04-14T15:00:00Z", "2026-04-14T19:00:00Z"), ...shift("2026-04-18T01:00:00Z", "2026-04-18T03:00:00Z")] });
+    // Tue: 2 h day + 2 h evening (50%); Sat 01–03 at a bar: 2 h at 70%.
+    expect(kr(r.totals.grossCents)).toBe(2 * 3000 + 2 * 4500 + 2 * 5100);
+    expect(r.issues.map((i) => i.code)).not.toContain("personal_below_minimum");
+    expect(r.issues.map((i) => i.code)).not.toContain("missing_employer_start_date");
+    expect(r.lines.every((l) => l.versionId === "custom")).toBe(true);
+  });
+
+  it("weekly overtime uses the custom overtime percentage", () => {
+    const punches = [13, 14, 15, 16, 17].flatMap((d) => shift(`2026-04-${String(d).padStart(2, "0")}T08:00:00Z`, `2026-04-${String(d).padStart(2, "0")}T17:00:00Z`));
+    const r = run({ terms: [custom()], punches });
+    // 45 h Mon–Fri day work: 40 h at 3000, 5 h overtime at 6000.
+    expect(kr(r.totals.grossCents)).toBe(40 * 3000 + 5 * 6000);
+  });
+
+  it("is blocked without pay or premiums", () => {
+    const a = run({ terms: [custom({ customRates: null })], punches: shift("2026-04-14T10:00:00Z", "2026-04-14T12:00:00Z") });
+    expect(a.issues.map((i) => i.code)).toContain("custom_missing_rates");
+    const b = run({ terms: [custom({ personalDayRate: null })], punches: shift("2026-04-14T10:00:00Z", "2026-04-14T12:00:00Z") });
+    expect(b.issues.map((i) => i.code)).toContain("custom_missing_pay");
+  });
+});
+
+describe("documented manual step without an employment start date", () => {
+  it("a step override and holiday rate taken from a payslip need no start date", () => {
+    const t = baseTerms({ employerStartDate: null, stepOverride: { step: "y1", reason: "skv. launaseðli sept. 2026" }, orlofOverrideBp: 1017 });
+    const r = run({ terms: [t], punches: shift("2026-04-14T10:00:00Z", "2026-04-14T12:00:00Z") });
+    const codes = r.issues.map((i) => i.code);
+    expect(codes).not.toContain("missing_employer_start_date");
+    expect(r.lines[0].step).toBe("y1");
+  });
+  it("without the override the missing start date still blocks", () => {
+    const r = run({ terms: [baseTerms({ employerStartDate: null })], punches: shift("2026-04-14T10:00:00Z", "2026-04-14T12:00:00Z") });
+    expect(r.issues.map((i) => i.code)).toContain("missing_employer_start_date");
+  });
+});

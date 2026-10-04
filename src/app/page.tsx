@@ -1,18 +1,16 @@
 import Link from "next/link";
 import { Showcase } from "./_home/Showcase";
 
-const CONTACT_EMAIL = "jonb.steinsson@gmail.com";
-
 const FEATURES = [
   {
     icon: "⏱",
     title: "Klukka inn og út",
-    desc: "Starfsfólk klukkar inn og út með einum smelli — einfalt og öruggt með Google aðgangi.",
+    desc: "Starfsfólk stimplar sig inn og út með notendanafni og PIN — aðeins á Wi-Fi staðarins ef þú vilt.",
   },
   {
     icon: "📊",
-    title: "Tímaskráningar",
-    desc: "Sjáðu allar tímaskráningar á einum stað. Flokkaðar eftir launatímabili.",
+    title: "Laun eftir kjarasamningi",
+    desc: "Álag, helgi- og stórhátíðardagar og yfirvinna reiknuð eftir kjarasamningi SA og Eflingar — læst uppgjör og CSV fyrir bókarann.",
   },
   {
     icon: "🗓",
@@ -31,16 +29,16 @@ const FEATURES = [
   },
   {
     icon: "🔒",
-    title: "Google innskráning",
-    desc: "Öruggt og auðvelt — engin lykilorð að muna. Starfsfólk skráir sig inn með Google.",
+    title: "Öruggt",
+    desc: "Hvert fyrirtæki er aðskilið, PIN berst í pósti við samþykki og allar breytingar eru skráðar.",
   },
 ];
 
 const STEPS = [
-  { step: "01", title: "Þú hefur samband", desc: "Sendu okkur skilaboð — við setjum upp aðgang fyrir þitt fyrirtæki." },
-  { step: "02", title: "Starfsfólk fær hlekk", desc: "Þú deilir hlekk eins og timon.bling.is/mitt-fyrirtaeki með starfsfólkinu þínu." },
-  { step: "03", title: "Klukka inn og út", desc: "Starfsfólk skráir sig inn með Google og klukkar inn/út á hvert skipti." },
-  { step: "04", title: "Þú sérð allt", desc: "Í admin-viðmóti sérðu allar tímaskráningar, getur samþykkt leiðréttingar og séð samantekt á launatímabili." },
+  { step: "01", title: "Skráðu staðinn", desc: "Skráðu þig inn með Google, sláðu inn nafn og kennitölu — staðurinn er tilbúinn á tveimur mínútum." },
+  { step: "02", title: "Stilltu Wi-Fi", desc: "Einn smellur: stimplun leyfð aðeins á neti staðarins." },
+  { step: "03", title: "Hengdu upp QR-kóða", desc: "Starfsfólk skannar, skráir sig og fær PIN í pósti þegar þú samþykkir." },
+  { step: "04", title: "Þú sérð allt", desc: "Vaktaplan, tímaskýrslur, leiðréttingar og launauppgjör tilbúið fyrir bókarann." },
 ];
 
 export default function LandingPage() {
@@ -53,8 +51,8 @@ export default function LandingPage() {
             ⏱ Tíma<span>vörður</span>
           </div>
           <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-            <Link href="/superadmin" className="btn btn--secondary btn--sm">
-              Admin innskráning
+            <Link href="/byrja" className="btn btn--primary btn--sm">
+              Byrja frítt
             </Link>
           </div>
         </div>
@@ -116,9 +114,9 @@ export default function LandingPage() {
           </p>
 
           <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
-            <a href={`mailto:${CONTACT_EMAIL}`} className="btn btn--primary btn--lg">
-              Fá aðgang →
-            </a>
+            <Link href="/byrja" className="btn btn--primary btn--lg">
+              Byrja frítt →
+            </Link>
             <a href="#features" className="btn btn--secondary btn--lg">
               Sjá meira
             </a>
@@ -216,6 +214,12 @@ export default function LandingPage() {
       >
         <div className="container">
           <span>© 2026 Tímavörður · Þróað á Íslandi 🇮🇸</span>
+          <div style={{ marginTop: 8, display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
+            <Link href="/skilmalar">Skilmálar</Link>
+            <Link href="/vinnslusamningur">Vinnslusamningur</Link>
+            <Link href="/personuvernd">Persónuvernd</Link>
+            <Link href="/hafa-samband">Hafa samband</Link>
+          </div>
         </div>
       </footer>
     </div>
