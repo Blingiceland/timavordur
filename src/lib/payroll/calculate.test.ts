@@ -253,6 +253,38 @@ describe("weekly overtime (gr. 3.1.4 / 3.2.4) and working arrangements", () => {
     expect(ot.reduce((s, l) => s + l.durationMs, 0)).toBe(3_600_000);
     // OT rate 344 000 × 1,0385% = 3 572,44 > weekend premium 2 900 → OT rate applies
     expect(ot[0].rateCents).toBe(357244);
+    expect([ot[0].labelIs, ot[0].labelEn]).toEqual(["Vaktaálag 45% (helgi) · yfirvinna", "Shift premium 45% (weekend) · overtime"]);
+    // The bookkeeper CSV keeps its meaning: no premium paid on top, overtime flag set.
+    expect([ot[0].pct, ot[0].overtime]).toEqual([0, true]);
+  });
+
+  it("overtime lines always name the premium window they fall in, never just „Yfirvinna“", () => {
+    // Mon–Thu 13.–16.4.2026 08–18 = 40 h, then Fri 22:00 → Sat 04:00 at a bar.
+    const punches = [
+      ...[13, 14, 15, 16].flatMap((d) => shift(`2026-04-${d}T08:00:00Z`, `2026-04-${d}T18:00:00Z`)),
+      ...shift("2026-04-17T22:00:00Z", "2026-04-18T04:00:00Z"),
+    ];
+    const otLabels = (r: ReturnType<typeof run>) =>
+      r.lines.filter((l) => l.overtime).map((l) => [l.labelIs, l.labelEn, l.durationMs / 3_600_000]);
+    const expected = [
+      ["Vaktaálag 33% (kvöld) · yfirvinna", "Shift premium 33% (evening) · overtime", 2],
+      ["Vaktaálag 55% (kráarnótt) · yfirvinna", "Shift premium 55% (bar night) · overtime", 4],
+    ];
+    expect(otLabels(run({ punches }))).toEqual(expected);
+    // Same labels while terms are still missing and nothing can be priced.
+    expect(otLabels(run({ punches, terms: [] }))).toEqual(expected);
+    // Custom terms show the employer's own percentages.
+    const custom = baseTerms({
+      agreementId: "custom", wageClass: null, employerStartDate: null, birthDate: null, personalDayRate: 3000,
+      customRates: { eveningPct: 50, nightWeekendPct: 60, barNightPct: 70, helgidagurPct: 80, storhatidPct: 100, overtimePct: 100 },
+    });
+    expect(otLabels(run({ punches, terms: [custom] })).map((l) => l[0])).toEqual(["Vaktaálag 50% (kvöld) · yfirvinna", "Vaktaálag 70% (kráarnótt) · yfirvinna"]);
+  });
+
+  it("weekday daytime hours beyond 40 read „Dagvinna · yfirvinna“", () => {
+    const punches = [13, 14, 15, 16, 17].flatMap((d) => shift(`2026-04-${d}T08:00:00Z`, `2026-04-${d}T17:00:00Z`));
+    const ot = run({ punches }).lines.filter((l) => l.overtime);
+    expect(ot.map((l) => [l.labelIs, l.labelEn])).toEqual([["Dagvinna · yfirvinna", "Day work · overtime"]]);
   });
 
   it("overtime never pays less than the premium that would have applied (stórhátíð 90%)", () => {
@@ -266,6 +298,7 @@ describe("weekly overtime (gr. 3.1.4 / 3.2.4) and working arrangements", () => {
     const ot = r.lines.filter((l) => l.overtime);
     expect(ot.reduce((s, l) => s + l.durationMs, 0)).toBe(2 * 3_600_000);
     expect(ot[0].rateCents).toBe(Math.max(357244, 380000));
+    expect(ot[0].labelIs).toBe("Stórhátíðarálag 90% · yfirvinna");
   });
 
   it("day arrangement: weekday 08–17 is dagvinna, evenings/helgidagar are overtime, stórhátíð is a blocker", () => {
@@ -274,6 +307,8 @@ describe("weekly overtime (gr. 3.1.4 / 3.2.4) and working arrangements", () => {
     const byKind = (k: string) => r.lines.filter((l) => l.kind === k).reduce((s, l) => s + l.durationMs, 0) / 3_600_000;
     expect(byKind("day")).toBe(27);
     expect(byKind("day_overtime")).toBe(18); // Skírdagur + annar í páskum
+    // Day workers have no shift premium outside 08–17: those hours are plain overtime.
+    expect(new Set(r.lines.filter((l) => l.kind === "day_overtime").map((l) => l.labelIs))).toEqual(new Set(["Yfirvinna"]));
     const r2 = run({ terms, punches: shift("2026-04-03T10:00:00Z", "2026-04-03T12:00:00Z") });
     expect(r2.issues.map((i) => i.code)).toContain("day_arrangement_storhatid");
     expect(r2.lines[0].amountCents).toBeNull();

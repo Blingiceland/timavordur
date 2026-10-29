@@ -11,7 +11,7 @@ import { pairPunches, type PayPeriod, type PunchLite } from "./punches";
 import { resolveRates, type RateResolution } from "./rates";
 import { orlofBasisPoints, termsForDate, type CustomRates, type EmploymentTerms } from "./terms";
 
-export const ENGINE_VERSION = "2026.10.0";
+export const ENGINE_VERSION = "2026.10.1";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -78,8 +78,18 @@ export interface CalculationInput {
   intervalsOnly?: boolean;
 }
 
+/**
+ * Weekly overtime keeps the name of the premium window it falls in
+ * („Vaktaálag 45% (helgi) · yfirvinna“), so staff always see the right %.
+ * Day workers outside 08–17 have no premium window: plain „Yfirvinna“.
+ */
 function label(kind: LineKind, overtime: boolean, pct: number): { is: string; en: string } {
-  if (overtime || kind === "day_overtime") return { is: "Yfirvinna", en: "Overtime" };
+  if (kind === "day_overtime") return { is: "Yfirvinna", en: "Overtime" };
+  const base = windowLabel(kind, pct);
+  return overtime ? { is: `${base.is} · yfirvinna`, en: `${base.en} · overtime` } : base;
+}
+
+function windowLabel(kind: Exclude<LineKind, "day_overtime">, pct: number): { is: string; en: string } {
   switch (kind) {
     case "day": return { is: "Dagvinna", en: "Day work" };
     case "evening": return { is: `Vaktaálag ${pct}% (kvöld)`, en: `Shift premium ${pct}% (evening)` };
@@ -173,12 +183,14 @@ export function calculateEmployeePeriod(input: CalculationInput): EmployeeCalcul
     let amountCents: number | null = null;
     let kind: LineKind = s.kind;
     let pct = s.pct;
+    let windowPct = s.pct; // the premium of the time window, shown even on overtime lines
 
     if (res.ok) {
       issues.push(...res.rates.issues);
       const r = res.rates;
       // Custom terms: same time windows, the employer's own percentages.
       const sp = r.terms.agreementId === "custom" && r.terms.customRates ? customPct(s.kind, r.terms.customRates) : s.pct;
+      windowPct = sp;
       const isOt = s.overtime || s.kind === "day_overtime";
       if (payType === "averaged") {
         issues.push({ code: "unsupported_pay_type", severity: "blocker", date });
@@ -205,7 +217,7 @@ export function calculateEmployeePeriod(input: CalculationInput): EmployeeCalcul
 
     const orlof = t ? orlofBasisPoints(t, date) : { bp: 1017, issues: [] };
     issues.push(...orlof.issues);
-    const lb = label(kind, s.overtime, pct);
+    const lb = label(kind, s.overtime, windowPct);
     lines.push({
       date,
       start: new Date(s.start).toISOString(),

@@ -13,8 +13,8 @@ Almennt, skjalfest snið, ekki sniðið að tilteknu launakerfi. **Opið atriði
 | stada_uppgjors | `locked` eða `draft` |
 | starfsmadur_id, nafn, kennitala | Eins og skráð var við lokun |
 | dagsetning, upphaf, lok | Vinnudagur og ISO-tími (UTC = íslenskur tími) |
-| vinnulidur, tegund | T.d. „Vaktaálag 45% (helgi)“ / `weekend`, `salary`, `adjustment` |
-| alag_pct, yfirvinna | Álagsprósenta; 1 ef yfirvinna |
+| vinnulidur, tegund | T.d. „Vaktaálag 45% (helgi)“ / `weekend`, `salary`, `adjustment`. Vikuyfirvinna (umfram 40 klst.) heldur nafni álagstímans: „Vaktaálag 45% (helgi) · yfirvinna“; dagvinnufólk utan 08–17: „Yfirvinna“ / `day_overtime` |
+| alag_pct, yfirvinna | Álagsprósenta sem greidd er (0 á yfirvinnulínum, sem greiðast á yfirvinnutaxta); 1 ef yfirvinna |
 | klst, taxti_kr, fjarhaed_kr | Magn, taxti og fjárhæð (2 aukastafir; tómt ef útreikning vantar) |
 | taxtautgafa, taxtastada | T.d. `2026-04` / `verified` |
 | kjaraskra_id, launaflokkur, threp, grunnur | Ráðningarkjör sem giltu: `minimum` eða `personal` |
