@@ -84,6 +84,13 @@ const ERRORS: Record<string, [string, string]> = {
   already_resolved: ["Beiðnin hefur þegar verið afgreidd", "Already resolved"],
   not_your_shift: ["Þetta er ekki þín vakt", "Not your shift"],
   cannot_approve_own: ["Þú getur ekki samþykkt eigin beiðni", "You cannot approve your own request"],
+  manager_required: ["Aðeins vaktstjóri eða eigandi getur þetta", "Only a manager or the owner can do this"],
+  time_required: ["Settu inn a.m.k. einn tíma", "Enter at least one time"],
+  too_old: ["Of langt aftur í tímann (hámark 62 dagar)", "Too far back (62 days at most)"],
+  staff_not_found: ["Starfsmaður fannst ekki", "Employee not found"],
+  replace_not_on_day: ["Vaktin er ekki á þessum degi — sæktu vaktirnar aftur", "That shift is not on this day — reload the shifts"],
+  replace_partial_shift: ["Veldu alla vaktina, ekki hluta hennar", "Choose the whole shift, not part of it"],
+  correction_overlaps: ["Tímarnir passa ekki við skráðar stimplanir (skarast eða vantar par). Settu inn bæði inn- og út-tíma eða hakaðu við vaktina sem á að skipta út.", "The times don't fit the recorded punches (overlap or missing pair). Enter both times or tick the shift to replace."],
 };
 
 export function errText(code: unknown, lang: Lang, retryAfter?: number): string {

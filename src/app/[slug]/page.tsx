@@ -6,7 +6,7 @@ import { auth, googleProvider } from "@/lib/firebase";
 import { signInWithPopup, signInWithRedirect, signInWithCustomToken, getRedirectResult, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { useTheme } from "@/lib/theme";
 
-import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift, SwapRequest, SwapShift, BusinessType, Correction } from "./_portal/types";
+import type { FieldLevel, Lang, Tab, TeamMember, PortalData, PortalShift, SwapRequest, SwapShift, BusinessType, Correction, DayShift } from "./_portal/types";
 import {
   roleLabel, roleColor, atLeast, errText, profilePayload,
   ALL_REG_FIELDS, T,
@@ -39,6 +39,13 @@ export default function CompanyPortal() {
   // Punch corrections
   const [corrections, setCorrections] = useState<Correction[]>([]);
   const [corrForm, setCorrForm] = useState({ date: "", inTime: "", outTime: "", reason: "" });
+  // Approver's ticks on the day's shifts ("<correctionId>:<first punch id>" → ticked); unset = the default.
+  const [corrPick, setCorrPick] = useState<Record<string, boolean>>({});
+  // Manager edits another employee's day directly
+  const [shiftEdit, setShiftEdit] = useState({ uid: "", date: "", inTime: "", outTime: "", reason: "" });
+  const [shiftEditDay, setShiftEditDay] = useState<DayShift[] | null>(null);
+  const [shiftEditPick, setShiftEditPick] = useState<Record<string, boolean>>({});
+  const shiftEditSeq = useRef(0);
   // Staff username/password sign-in
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loggingIn, setLoggingIn] = useState(false);
@@ -142,7 +149,10 @@ export default function CompanyPortal() {
   // staff after an admin signs out) may not have access to the previously selected
   // tab, and single-tab staff have no tab bar to switch back with.
   // Also drop the previous user's portal data so no request runs with a stale status.
-  useEffect(() => { setTab("clock"); setPortal(null); setAllShifts([]); setSwaps([]); setCorrections([]); }, [user?.uid]);
+  useEffect(() => {
+    setTab("clock"); setPortal(null); setAllShifts([]); setSwaps([]); setCorrections([]);
+    setCorrPick({}); setShiftEdit({ uid: "", date: "", inTime: "", outTime: "", reason: "" });
+  }, [user?.uid]);
   // Until required profile fields are filled in, only the clock is available.
   const mustComplete = (portal?.missingFields?.length ?? 0) > 0;
   useEffect(() => { if (mustComplete) setTab("clock"); }, [mustComplete]);
@@ -255,11 +265,11 @@ export default function CompanyPortal() {
     } catch { showMsg(lang === "en" ? "Network error" : "Netvilla", false); }
   };
 
-  const doCorrectionAction = async (id: string, action: string) => {
+  const doCorrectionAction = async (id: string, action: string, extra: Record<string, unknown> = {}) => {
     if (!user) return;
     try {
       const token = await user.getIdToken();
-      const res = await fetch(`/api/${slug}/corrections`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ id, action }) });
+      const res = await fetch(`/api/${slug}/corrections`, { method: "PATCH", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ id, action, ...extra }) });
       const d = await res.json();
       if (res.ok) { showMsg(lang === "is" ? "✅ Uppfært" : "✅ Updated"); await Promise.all([fetchCorrections(), fetchPortal()]); }
       else showMsg(errText(d.error, lang || "is") || "Villa", false);
@@ -275,6 +285,42 @@ export default function CompanyPortal() {
       const d = await res.json();
       if (res.ok) { showMsg(lang === "is" ? "✅ Beiðni send" : "✅ Request sent"); setCorrForm({ date: "", inTime: "", outTime: "", reason: "" }); await fetchCorrections(); }
       else showMsg(errText(d.error, lang || "is") || "Villa", false);
+    } catch { showMsg(lang === "en" ? "Network error" : "Netvilla", false); }
+  };
+
+  const fetchShiftEditDay = useCallback(async (uid: string, date: string) => {
+    const seq = ++shiftEditSeq.current; // only the latest request may fill the list
+    setShiftEditDay(null);
+    setShiftEditPick({});
+    if (!user || !uid || !date) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(`/api/${slug}/corrections?uid=${encodeURIComponent(uid)}&date=${date}`, { headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json();
+      if (seq === shiftEditSeq.current) setShiftEditDay(res.ok ? d.shifts || [] : null);
+    } catch { /* list stays empty; saving is disabled */ }
+  }, [user, slug]);
+
+  useEffect(() => { fetchShiftEditDay(shiftEdit.uid, shiftEdit.date); }, [shiftEdit.uid, shiftEdit.date, fetchShiftEditDay]);
+
+  /** Save the manager's edit: new times replace the ticked shifts; with remove, the ticked shifts are just removed. */
+  const saveShiftEdit = async (remove: boolean) => {
+    if (!user || !shiftEditDay) return;
+    const replaces = shiftEditDay.filter(s => shiftEditPick[s.punchIds[0]] ?? !s.inProgress).flatMap(s => s.punchIds);
+    if (remove) {
+      if (!replaces.length) { showMsg(lang === "is" ? "Hakaðu við vaktina sem á að fjarlægja" : "Tick the shift to remove", false); return; }
+      if (!confirm(lang === "is" ? "Fjarlægja völdu vaktirnar? Þær teljast þá ekki lengur með, en sjást áfram í sögunni." : "Remove the ticked shifts? They stop counting but stay in the history.")) return;
+    } else if (!shiftEdit.inTime && !shiftEdit.outTime) { showMsg(lang === "is" ? "Settu inn a.m.k. einn tíma" : "Enter at least one time", false); return; }
+    try {
+      const token = await user.getIdToken();
+      const body = { uid: shiftEdit.uid, date: shiftEdit.date, reason: shiftEdit.reason, replaces, ...(remove ? {} : { inTime: shiftEdit.inTime, outTime: shiftEdit.outTime }) };
+      const res = await fetch(`/api/${slug}/corrections`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+      const d = await res.json();
+      if (res.ok) {
+        showMsg(d.applied ? (lang === "is" ? (remove ? "✅ Vakt fjarlægð" : "✅ Vakt uppfærð") : (remove ? "✅ Shift removed" : "✅ Shift updated")) : (lang === "is" ? "✅ Beiðni send til samþykktar" : "✅ Sent for approval"));
+        setShiftEdit(f => ({ ...f, inTime: "", outTime: "", reason: "" }));
+        await Promise.all([fetchShiftEditDay(shiftEdit.uid, shiftEdit.date), fetchCorrections(), fetchPortal()]);
+      } else showMsg(errText(d.error, lang || "is") || "Villa", false);
     } catch { showMsg(lang === "en" ? "Network error" : "Netvilla", false); }
   };
 
@@ -640,6 +686,13 @@ export default function CompanyPortal() {
   const pendingCorrections = corrections; // API already returns only pending; managers get all, staff get own
   const corrBadge = canSeeTeam ? pendingCorrections.length : myCorrections.length;
   const fmtCorrDate = (ymd: string) => new Date(ymd + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  const fmtDayShift = (s: DayShift) => {
+    const hm = (iso: string | null, missing: string) => iso ? iso.slice(11, 16) : missing;
+    const nextDay = s.inAt && s.outAt && s.outAt.slice(0, 10) > s.inAt.slice(0, 10) ? " (+1)" : "";
+    const noOut = s.inProgress ? (lang === "is" ? "í vinnu núna" : "working now") : (lang === "is" ? "vantar út" : "no out");
+    return `${hm(s.inAt, lang === "is" ? "vantar inn" : "no in")}–${hm(s.outAt, noOut)}${nextDay}`;
+  };
+  const editableTeam = (portal.team || []).filter(m => m.status === "approved").sort((a, b) => (a.name || "").localeCompare(b.name || "", "is"));
   const fmtSwapShift = (sh: SwapShift) => {
     const d = new Date(sh.date + "T00:00:00Z").toLocaleDateString(lang === "en" ? "en-GB" : "is-IS", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
     return `${d} ${sh.startTime}–${sh.endTime}${sh.endTime <= sh.startTime ? " (+1)" : ""}`;
@@ -927,7 +980,7 @@ export default function CompanyPortal() {
             {/* Submit a correction */}
             <div className="card" style={{ padding: 20 }}>
               <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 6 }}>{lang === "is" ? "Leiðrétting á stimplun" : "Punch correction"}</div>
-              <p className="text-secondary" style={{ fontSize: "0.85rem", marginBottom: 14 }}>{lang === "is" ? "Gleymdir þú að stimpla inn eða út? Sendu leiðréttingu sem vaktstjóri/eigandi samþykkir." : "Forgot to clock in or out? Send a correction for a manager/owner to approve."}</p>
+              <p className="text-secondary" style={{ fontSize: "0.85rem", marginBottom: 14 }}>{lang === "is" ? "Gleymdir þú að stimpla inn eða út, eða er vakt rangt skráð? Sendu leiðréttingu sem vaktstjóri/eigandi samþykkir. Ef vakt er þegar skráð þennan dag kemur leiðréttingin í stað hennar." : "Forgot to clock in or out, or is a shift wrong? Send a correction for a manager/owner to approve. If a shift is already recorded that day, the correction replaces it."}</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 <div className="form-group" style={{ margin: 0 }}>
                   <label className="form-label">{lang === "is" ? "Dagur" : "Date"}</label>
@@ -962,13 +1015,88 @@ export default function CompanyPortal() {
                         <strong>{c.name}</strong> · {fmtCorrDate(c.date)}{" "}
                         {c.inTime ? `${lang === "is" ? "Inn" : "In"} ${c.inTime}` : ""}{c.inTime && c.outTime ? " · " : ""}{c.outTime ? `${lang === "is" ? "Út" : "Out"} ${c.outTime}` : ""}
                         {c.reason && <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.reason}</div>}
+                        {(c.replaces?.length ?? 0) > 0 && (
+                          <div style={{ marginTop: 6, fontSize: "0.8rem" }}>
+                            <div style={{ color: "var(--text-muted)" }}>
+                              {c.inTime && c.outTime
+                                ? (lang === "is" ? "Kemur í stað (taktu hak af til að halda):" : "Replaces (untick to keep):")
+                                : (lang === "is" ? `Breytir ${c.inTime ? "inn" : "út"}-tímanum á (taktu hak af til að halda):` : `Changes the ${c.inTime ? "in" : "out"} time of (untick to keep):`)}
+                            </div>
+                            {c.replaces!.map(s => (
+                              <label key={s.punchIds[0]} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                                <input type="checkbox" checked={corrPick[`${c.id}:${s.punchIds[0]}`] ?? !s.inProgress} onChange={e => setCorrPick(k => ({ ...k, [`${c.id}:${s.punchIds[0]}`]: e.target.checked }))} />
+                                {fmtDayShift(s)}
+                              </label>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
-                        <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => doCorrectionAction(c.id, "approve")}>{lang === "is" ? "Samþykkja" : "Approve"}</button>
+                        <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => doCorrectionAction(c.id, "approve", { replaces: (c.replaces || []).filter(s => corrPick[`${c.id}:${s.punchIds[0]}`] ?? !s.inProgress).flatMap(s => s.punchIds) })}>{lang === "is" ? "Samþykkja" : "Approve"}</button>
                         <button className="btn btn--sm" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} onClick={() => doCorrectionAction(c.id, "reject")}>{lang === "is" ? "Hafna" : "Reject"}</button>
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Manager edits another employee's day directly */}
+            {canSeeTeam && (
+              <div className="card" style={{ padding: 20 }}>
+                <div style={{ fontSize: "0.95rem", fontWeight: 600, marginBottom: 6 }}>{lang === "is" ? "Breyta vakt starfsmanns" : "Edit an employee's shift"}</div>
+                <p className="text-secondary" style={{ fontSize: "0.85rem", marginBottom: 14 }}>{lang === "is" ? "Veldu starfsmann og dag. Nýju tímarnir koma í stað vaktanna sem hakað er við og gilda strax. Gömlu stimplanirnar sjást áfram í sögunni." : "Pick an employee and a day. The new times replace the ticked shifts and apply at once. The old punches stay in the history."}</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                    <div className="form-group" style={{ flex: 2, minWidth: 180, margin: 0 }}>
+                      <label className="form-label">{lang === "is" ? "Starfsmaður" : "Employee"}</label>
+                      <select className="form-input" value={shiftEdit.uid} onChange={e => setShiftEdit(f => ({ ...f, uid: e.target.value }))}>
+                        <option value="">{lang === "is" ? "Veldu…" : "Choose…"}</option>
+                        {editableTeam.map(m => <option key={m.uid} value={m.uid}>{m.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ flex: 1, minWidth: 140, margin: 0 }}>
+                      <label className="form-label">{lang === "is" ? "Dagur" : "Date"}</label>
+                      <input type="date" className="form-input" value={shiftEdit.date} onChange={e => setShiftEdit(f => ({ ...f, date: e.target.value }))} />
+                    </div>
+                  </div>
+                  {shiftEdit.uid && shiftEdit.date && shiftEditDay && (
+                    <div style={{ fontSize: "0.85rem", padding: "10px 12px", background: "var(--bg-surface)", borderRadius: "var(--radius-md)" }}>
+                      {shiftEditDay.length === 0 ? (
+                        <span className="text-muted">{lang === "is" ? "Engin vakt skráð þennan dag. Nýju tímarnir bætast við." : "No shift recorded that day. The new times are added."}</span>
+                      ) : (
+                        <>
+                          <div style={{ marginBottom: 6, color: "var(--text-muted)" }}>{lang === "is" ? "Skráð þennan dag. Hakaðu við það sem á að skipta út:" : "Recorded that day. Tick what to replace:"}</div>
+                          {shiftEditDay.map(s => (
+                            <label key={s.punchIds[0]} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", cursor: "pointer" }}>
+                              <input type="checkbox" checked={shiftEditPick[s.punchIds[0]] ?? !s.inProgress} onChange={e => setShiftEditPick(k => ({ ...k, [s.punchIds[0]]: e.target.checked }))} />
+                              {fmtDayShift(s)}
+                            </label>
+                          ))}
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                      <label className="form-label">{lang === "is" ? "Inn" : "In"}</label>
+                      <input type="time" className="form-input" value={shiftEdit.inTime} onChange={e => setShiftEdit(f => ({ ...f, inTime: e.target.value }))} />
+                    </div>
+                    <div className="form-group" style={{ flex: 1, margin: 0 }}>
+                      <label className="form-label">{lang === "is" ? "Út" : "Out"}</label>
+                      <input type="time" className="form-input" value={shiftEdit.outTime} onChange={e => setShiftEdit(f => ({ ...f, outTime: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ margin: 0 }}>
+                    <label className="form-label">{lang === "is" ? "Ástæða" : "Reason"}</label>
+                    <input className="form-input" placeholder={lang === "is" ? "t.d. gleymdi að stimpla út" : "e.g. forgot to clock out"} value={shiftEdit.reason} onChange={e => setShiftEdit(f => ({ ...f, reason: e.target.value }))} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="btn btn--primary" disabled={!shiftEdit.uid || !shiftEdit.date || !shiftEditDay} onClick={() => saveShiftEdit(false)} style={{ justifyContent: "center", flex: 1 }}>{lang === "is" ? "Vista vakt" : "Save shift"}</button>
+                    {shiftEditDay && shiftEditDay.length > 0 && (
+                      <button className="btn" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} onClick={() => saveShiftEdit(true)}>{lang === "is" ? "Fjarlægja valdar vaktir" : "Remove ticked shifts"}</button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

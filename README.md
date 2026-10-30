@@ -54,7 +54,7 @@ Skilmálar, vinnslusamningur og persónuverndarupplýsingar (`/skilmalar`, `/vin
 | `superadmin` | Stofnar/sýslar með öll fyrirtæki (`/superadmin`). |
 | `owner`      | Fullur aðgangur að einu fyrirtæki: stillingar, starfsfólk, vaktir. |
 | `admin`      | Starfsmannaumsýsla (ekki owner/admin), ráðningarkjör, launavinnsla. |
-| `manager`    | Sér stöðu liðs, stýrir vaktaplani, samþykkir leiðréttingar/vaktaskipti. Sér ekki laun annarra. |
+| `manager`    | Sér stöðu liðs, stýrir vaktaplani, samþykkir leiðréttingar/vaktaskipti og leiðréttir vaktir annarra beint (eigin vaktir fara í samþykkt). Sér ekki laun annarra. |
 | `staff`      | Eigin stimpilklukka, vaktir, eigin tímaskýrsla og kjör. |
 
 Aðgangur ræðst **eingöngu** af `staff.role` og `status === "approved"` innan
@@ -62,6 +62,23 @@ fyrirtækisins. `adminEmails` er boðslisti: staðfest Google-netfang á listanu
 verður owner við fyrstu innskráningu; superadmin sem fjarlægir netfang lækkar
 hlutverkið. PIN-aðgangar (4 tölustafir) geta mest verið `manager`, eru bundnir
 fyrirtæki og ógildast við PIN-endurstillingu.
+
+### Leiðréttingar á stimplunum
+
+Leiðrétting fyrir dag sem á þegar skráða vakt kemur í stað hennar: gömlu
+stimplanirnar eru merktar `supersededBy` (aldrei eytt) og launavinnslan sleppir
+þeim. Reglurnar eru í `src/lib/payroll/corrections.ts`:
+
+- Vakt dagsins er það sem hófst þann dag; stök útstimplun fyrir hádegi telst til
+  nóttarinnar á undan. Vakt sem er í gangi núna er aldrei skipt út nema hún sé valin.
+- Báðir tímar: vaktinni er skipt út. Aðeins annar tíminn: sú hlið ein er leiðrétt
+  (út-tími lokar gleymdri útstimplun, líka eftir miðnætti; inn-tími færir byrjun).
+- Leiðrétting má ekki skilja eftir stimplun án pars (skörun er hafnað, `correction_overlaps`).
+- Sá sem samþykkir sér hvað verður skipt út og getur haldið vakt (t.d. tvær vaktir sama dag).
+- Vaktstjóri breytir eða fjarlægir vakt þeirra sem eru neðar í röðinni beint; það
+  gildir strax og fer í `auditLog` sem `punch.correction.direct`. Eigin vakt, vakt
+  jafningja eða yfirmanns verður að beiðni sem hvorki starfsmaðurinn né sá sem
+  sendi hana getur samþykkt (eigandi má). Læst tímabil eru varin í öllum tilvikum.
 
 ## Uppsetning (þróun)
 

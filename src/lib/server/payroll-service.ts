@@ -44,6 +44,7 @@ export async function loadPunches(companyId: string, from: number, to: number, u
     const p = d.data();
     if (uids && !uids.includes(p.uid)) continue;
     if (p.type !== "in" && p.type !== "out") continue;
+    if (p.supersededBy) continue; // replaced by an approved correction; kept for history only
     if (!out.has(p.uid)) out.set(p.uid, []);
     out.get(p.uid)!.push({ id: d.id, type: p.type, at: p.timestamp.toMillis() });
   }
