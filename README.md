@@ -54,7 +54,7 @@ Skilmálar, vinnslusamningur og persónuverndarupplýsingar (`/skilmalar`, `/vin
 | `superadmin` | Stofnar/sýslar með öll fyrirtæki (`/superadmin`). |
 | `owner`      | Fullur aðgangur að einu fyrirtæki: stillingar, starfsfólk, vaktir. |
 | `admin`      | Starfsmannaumsýsla (ekki owner/admin), ráðningarkjör, launavinnsla. |
-| `manager`    | Sér stöðu liðs, stýrir vaktaplani, samþykkir leiðréttingar/vaktaskipti. Sér ekki laun annarra. |
+| `manager`    | Sér stöðu liðs, stýrir vaktaplani, samþykkir leiðréttingar/vaktaskipti og leiðréttir vaktir annarra beint (eigin vaktir fara í samþykkt). Sér ekki laun annarra. |
 | `staff`      | Eigin stimpilklukka, vaktir, eigin tímaskýrsla og kjör. |
 
 Aðgangur ræðst **eingöngu** af `staff.role` og `status === "approved"` innan
@@ -62,6 +62,16 @@ fyrirtækisins. `adminEmails` er boðslisti: staðfest Google-netfang á listanu
 verður owner við fyrstu innskráningu; superadmin sem fjarlægir netfang lækkar
 hlutverkið. PIN-aðgangar (4 tölustafir) geta mest verið `manager`, eru bundnir
 fyrirtæki og ógildast við PIN-endurstillingu.
+
+### Leiðréttingar á stimplunum
+
+Leiðrétting fyrir dag sem á þegar skráða vakt kemur í stað hennar: gömlu
+stimplanirnar eru merktar `supersededBy` (aldrei eytt) og launavinnslan sleppir
+þeim. Vakt dagsins er það sem hófst þann dag; stök útstimplun fyrir hádegi telst
+til nóttarinnar á undan. Sá sem samþykkir sér hvað verður skipt út og getur
+haldið vakt (t.d. tvær vaktir sama dag). Vaktstjóri getur líka breytt eða
+fjarlægt vakt annars starfsmanns beint; það gildir strax og fer í `auditLog`
+sem `punch.correction.direct`. Læst tímabil eru varin í báðum tilvikum.
 
 ## Uppsetning (þróun)
 

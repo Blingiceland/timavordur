@@ -7,6 +7,13 @@ export type Lang = "is" | "en";
 export type Tab = "clock" | "team" | "staff" | "settings" | "swaps" | "corrections";
 
 // ── Punch corrections ────────────────────────────────────────────────────────
+/** A recorded shift (or lone punch) on a day; ISO times, null where a punch is missing. */
+export interface DayShift {
+  punchIds: string[];
+  inAt: string | null;
+  outAt: string | null;
+}
+
 export interface Correction {
   id: string;
   uid: string;
@@ -16,6 +23,8 @@ export interface Correction {
   outTime?: string | null;
   reason?: string;
   status: string;
+  /** The day's recorded shifts that approval replaces (the approver may keep some). */
+  replaces?: DayShift[];
 }
 
 // ── Shift swaps ──────────────────────────────────────────────────────────────

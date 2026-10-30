@@ -66,6 +66,38 @@ export function pairPunches(punches: PunchLite[], now: number, maxShiftHours = M
   return { shifts, issues };
 }
 
+/** A recorded shift, or a lone punch, as a correction sees it. */
+export interface DayShift {
+  punchIds: string[];
+  inAt: number | null;
+  outAt: number | null;
+}
+
+/**
+ * The recorded shifts that belong to a work day — what a correction for that
+ * day replaces. Shifts and lone punch-ins belong to the day they started; a lone
+ * punch-out before noon ends the night before. With `span` (the corrected
+ * times), anything overlapping it is included too.
+ */
+export function shiftsOnDay(punches: PunchLite[], date: string, span?: { from: number; to: number }): DayShift[] {
+  // No "now": an unclosed punch-in is a lone punch, never an estimated shift.
+  const { shifts, issues } = pairPunches(punches, Number.MAX_SAFE_INTEGER);
+  const byId = new Map(punches.map((p) => [p.id, p]));
+  const all: DayShift[] = shifts.map((s) => ({ punchIds: s.punchIds, inAt: s.start, outAt: s.end }));
+  for (const i of issues) {
+    const p = byId.get(i.punchIds?.[0] ?? "");
+    if (!p || i.code === "punch_shift_too_long") continue; // that one is a paired shift already
+    all.push(p.type === "in" ? { punchIds: [p.id], inAt: p.at, outAt: null } : { punchIds: [p.id], inAt: null, outAt: p.at });
+  }
+  return all
+    .filter((s) => {
+      const anchor = s.inAt !== null ? dateOf(s.inAt) : dateOf(s.outAt! - 12 * HOUR);
+      if (anchor === date) return true;
+      return !!span && (s.inAt ?? s.outAt!) <= span.to && (s.outAt ?? s.inAt!) >= span.from;
+    })
+    .sort((a, b) => (a.inAt ?? a.outAt!) - (b.inAt ?? b.outAt!));
+}
+
 // ── Pay periods ────────────────────────────────────────────────────────────────
 export interface PayPeriod {
   key: string; // YYYY-MM of the month in which the period STARTS (25th)
