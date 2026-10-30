@@ -39,12 +39,13 @@ export default function CompanyPortal() {
   // Punch corrections
   const [corrections, setCorrections] = useState<Correction[]>([]);
   const [corrForm, setCorrForm] = useState({ date: "", inTime: "", outTime: "", reason: "" });
-  // Approver's choice: day shifts to KEEP when approving ("<correctionId>:<first punch id>").
-  const [corrKeep, setCorrKeep] = useState<Record<string, boolean>>({});
+  // Approver's ticks on the day's shifts ("<correctionId>:<first punch id>" → ticked); unset = the default.
+  const [corrPick, setCorrPick] = useState<Record<string, boolean>>({});
   // Manager edits another employee's day directly
   const [shiftEdit, setShiftEdit] = useState({ uid: "", date: "", inTime: "", outTime: "", reason: "" });
   const [shiftEditDay, setShiftEditDay] = useState<DayShift[] | null>(null);
-  const [shiftEditKeep, setShiftEditKeep] = useState<Record<string, boolean>>({});
+  const [shiftEditPick, setShiftEditPick] = useState<Record<string, boolean>>({});
+  const shiftEditSeq = useRef(0);
   // Staff username/password sign-in
   const [loginForm, setLoginForm] = useState({ username: "", password: "" });
   const [loggingIn, setLoggingIn] = useState(false);
@@ -148,7 +149,10 @@ export default function CompanyPortal() {
   // staff after an admin signs out) may not have access to the previously selected
   // tab, and single-tab staff have no tab bar to switch back with.
   // Also drop the previous user's portal data so no request runs with a stale status.
-  useEffect(() => { setTab("clock"); setPortal(null); setAllShifts([]); setSwaps([]); setCorrections([]); }, [user?.uid]);
+  useEffect(() => {
+    setTab("clock"); setPortal(null); setAllShifts([]); setSwaps([]); setCorrections([]);
+    setCorrPick({}); setShiftEdit({ uid: "", date: "", inTime: "", outTime: "", reason: "" });
+  }, [user?.uid]);
   // Until required profile fields are filled in, only the clock is available.
   const mustComplete = (portal?.missingFields?.length ?? 0) > 0;
   useEffect(() => { if (mustComplete) setTab("clock"); }, [mustComplete]);
@@ -285,14 +289,16 @@ export default function CompanyPortal() {
   };
 
   const fetchShiftEditDay = useCallback(async (uid: string, date: string) => {
-    if (!user || !uid || !date) { setShiftEditDay(null); return; }
+    const seq = ++shiftEditSeq.current; // only the latest request may fill the list
+    setShiftEditDay(null);
+    setShiftEditPick({});
+    if (!user || !uid || !date) return;
     try {
       const token = await user.getIdToken();
       const res = await fetch(`/api/${slug}/corrections?uid=${encodeURIComponent(uid)}&date=${date}`, { headers: { Authorization: `Bearer ${token}` } });
       const d = await res.json();
-      setShiftEditDay(res.ok ? d.shifts || [] : null);
-      setShiftEditKeep({});
-    } catch { setShiftEditDay(null); }
+      if (seq === shiftEditSeq.current) setShiftEditDay(res.ok ? d.shifts || [] : null);
+    } catch { /* list stays empty; saving is disabled */ }
   }, [user, slug]);
 
   useEffect(() => { fetchShiftEditDay(shiftEdit.uid, shiftEdit.date); }, [shiftEdit.uid, shiftEdit.date, fetchShiftEditDay]);
@@ -300,7 +306,7 @@ export default function CompanyPortal() {
   /** Save the manager's edit: new times replace the ticked shifts; with remove, the ticked shifts are just removed. */
   const saveShiftEdit = async (remove: boolean) => {
     if (!user || !shiftEditDay) return;
-    const replaces = shiftEditDay.filter(s => !shiftEditKeep[s.punchIds[0]]).flatMap(s => s.punchIds);
+    const replaces = shiftEditDay.filter(s => shiftEditPick[s.punchIds[0]] ?? !s.inProgress).flatMap(s => s.punchIds);
     if (remove) {
       if (!replaces.length) { showMsg(lang === "is" ? "Hakaðu við vaktina sem á að fjarlægja" : "Tick the shift to remove", false); return; }
       if (!confirm(lang === "is" ? "Fjarlægja völdu vaktirnar? Þær teljast þá ekki lengur með, en sjást áfram í sögunni." : "Remove the ticked shifts? They stop counting but stay in the history.")) return;
@@ -683,7 +689,8 @@ export default function CompanyPortal() {
   const fmtDayShift = (s: DayShift) => {
     const hm = (iso: string | null, missing: string) => iso ? iso.slice(11, 16) : missing;
     const nextDay = s.inAt && s.outAt && s.outAt.slice(0, 10) > s.inAt.slice(0, 10) ? " (+1)" : "";
-    return `${hm(s.inAt, lang === "is" ? "vantar inn" : "no in")}–${hm(s.outAt, lang === "is" ? "vantar út" : "no out")}${nextDay}`;
+    const noOut = s.inProgress ? (lang === "is" ? "í vinnu núna" : "working now") : (lang === "is" ? "vantar út" : "no out");
+    return `${hm(s.inAt, lang === "is" ? "vantar inn" : "no in")}–${hm(s.outAt, noOut)}${nextDay}`;
   };
   const editableTeam = (portal.team || []).filter(m => m.status === "approved").sort((a, b) => (a.name || "").localeCompare(b.name || "", "is"));
   const fmtSwapShift = (sh: SwapShift) => {
@@ -1010,10 +1017,14 @@ export default function CompanyPortal() {
                         {c.reason && <div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.reason}</div>}
                         {(c.replaces?.length ?? 0) > 0 && (
                           <div style={{ marginTop: 6, fontSize: "0.8rem" }}>
-                            <div style={{ color: "var(--text-muted)" }}>{lang === "is" ? "Kemur í stað (taktu hak af til að halda):" : "Replaces (untick to keep):"}</div>
+                            <div style={{ color: "var(--text-muted)" }}>
+                              {c.inTime && c.outTime
+                                ? (lang === "is" ? "Kemur í stað (taktu hak af til að halda):" : "Replaces (untick to keep):")
+                                : (lang === "is" ? `Breytir ${c.inTime ? "inn" : "út"}-tímanum á (taktu hak af til að halda):` : `Changes the ${c.inTime ? "in" : "out"} time of (untick to keep):`)}
+                            </div>
                             {c.replaces!.map(s => (
                               <label key={s.punchIds[0]} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
-                                <input type="checkbox" checked={!corrKeep[`${c.id}:${s.punchIds[0]}`]} onChange={e => setCorrKeep(k => ({ ...k, [`${c.id}:${s.punchIds[0]}`]: !e.target.checked }))} />
+                                <input type="checkbox" checked={corrPick[`${c.id}:${s.punchIds[0]}`] ?? !s.inProgress} onChange={e => setCorrPick(k => ({ ...k, [`${c.id}:${s.punchIds[0]}`]: e.target.checked }))} />
                                 {fmtDayShift(s)}
                               </label>
                             ))}
@@ -1021,7 +1032,7 @@ export default function CompanyPortal() {
                         )}
                       </div>
                       <div style={{ display: "flex", gap: 6 }}>
-                        <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => doCorrectionAction(c.id, "approve", { replaces: (c.replaces || []).filter(s => !corrKeep[`${c.id}:${s.punchIds[0]}`]).flatMap(s => s.punchIds) })}>{lang === "is" ? "Samþykkja" : "Approve"}</button>
+                        <button className="btn btn--sm" style={{ background: "rgba(0,212,170,0.1)", color: "var(--accent)", border: "1px solid rgba(0,212,170,0.3)" }} onClick={() => doCorrectionAction(c.id, "approve", { replaces: (c.replaces || []).filter(s => corrPick[`${c.id}:${s.punchIds[0]}`] ?? !s.inProgress).flatMap(s => s.punchIds) })}>{lang === "is" ? "Samþykkja" : "Approve"}</button>
                         <button className="btn btn--sm" style={{ background: "rgba(255,77,106,0.1)", color: "var(--danger)", border: "1px solid rgba(255,77,106,0.3)" }} onClick={() => doCorrectionAction(c.id, "reject")}>{lang === "is" ? "Hafna" : "Reject"}</button>
                       </div>
                     </div>
@@ -1058,7 +1069,7 @@ export default function CompanyPortal() {
                           <div style={{ marginBottom: 6, color: "var(--text-muted)" }}>{lang === "is" ? "Skráð þennan dag. Hakaðu við það sem á að skipta út:" : "Recorded that day. Tick what to replace:"}</div>
                           {shiftEditDay.map(s => (
                             <label key={s.punchIds[0]} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", cursor: "pointer" }}>
-                              <input type="checkbox" checked={!shiftEditKeep[s.punchIds[0]]} onChange={e => setShiftEditKeep(k => ({ ...k, [s.punchIds[0]]: !e.target.checked }))} />
+                              <input type="checkbox" checked={shiftEditPick[s.punchIds[0]] ?? !s.inProgress} onChange={e => setShiftEditPick(k => ({ ...k, [s.punchIds[0]]: e.target.checked }))} />
                               {fmtDayShift(s)}
                             </label>
                           ))}

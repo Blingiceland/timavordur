@@ -280,7 +280,7 @@ describe("corrections and swaps", () => {
     expect(n.size).toBe(2);
   });
   it("approval is refused when the punches changed after the request", async () => {
-    const c = await call(corrections.POST, { slug: "alpha", method: "POST", token: staff.token, body: { date: recent, outTime: "23:00", reason: "x" } });
+    const c = await call(corrections.POST, { slug: "alpha", method: "POST", token: staff.token, body: { date: recent, inTime: "18:00", outTime: "23:00", reason: "x" } });
     await seedPunch(A, staff.uid, "in", `${recent}T17:00:00Z`);
     const r = await call(corrections.PATCH, { slug: "alpha", method: "PATCH", token: manager.token, body: { id: c.body.id, action: "approve" } });
     expect(r.status).toBe(409); expect(r.body.error).toBe("punches_changed_since_request");
@@ -401,6 +401,53 @@ describe("corrections replace the day's recorded shift", () => {
     const partial = await edit(manager.token, { uid: staff.uid, date: recent, inTime: "18:00", outTime: "22:00", replaces: [half] });
     expect(partial.status).toBe(400); expect(partial.body.error).toBe("replace_partial_shift");
     expect(await live(staff.uid)).toHaveLength(4);
+  });
+
+  it("an out time alone completes a forgotten clock-out, also after midnight", async () => {
+    await seedPunch(A, staff.uid, "in", `${recent}T20:00:00Z`);
+    const c = await edit(staff.token, { date: recent, outTime: "02:30", reason: "gleymdi að stimpla út" });
+    expect(c.status).toBe(200);
+    expect((await call(corrections.PATCH, { slug: "alpha", method: "PATCH", token: manager.token, body: { id: c.body.id, action: "approve" } })).status).toBe(200);
+    expect(await live(staff.uid)).toEqual(["in 20:00", "out 02:30"]);
+    expect(await sheet(staff.uid)).toEqual({ hours: 6.5, punchIssues: [] });
+  });
+
+  it("an in time alone moves the start and keeps the clock-out", async () => {
+    await seedPunch(A, staff.uid, "in", `${recent}T19:00:00Z`);
+    await seedPunch(A, staff.uid, "out", `${recent}T23:00:00Z`);
+    const c = await edit(staff.token, { date: recent, inTime: "17:00", reason: "gleymdi að stimpla inn" });
+    expect((await call(corrections.PATCH, { slug: "alpha", method: "PATCH", token: manager.token, body: { id: c.body.id, action: "approve" } })).status).toBe(200);
+    expect(await live(staff.uid)).toEqual(["in 17:00", "out 23:00"]);
+    expect(await sheet(staff.uid)).toEqual({ hours: 6, punchIssues: [] });
+    const punch = await call(portal.POST, { slug: "alpha", method: "POST", token: staff.token, body: { action: "in", idempotencyKey: key() } });
+    expect(punch.status).toBe(200);
+  });
+
+  it("a correction that would leave a punch without its pair is refused when it is sent", async () => {
+    const r = await edit(staff.token, { date: recent, outTime: "23:30", reason: "x" });
+    expect(r.status).toBe(409); expect(r.body.error).toBe("correction_overlaps");
+  });
+
+  it("the shift being worked right now is marked as such", async () => {
+    const started = new Date(Date.now() - 10 * 60_000).toISOString();
+    await seedPunch(A, staff.uid, "in", started);
+    const day = await dayShifts(manager.token, staff.uid, started.slice(0, 10));
+    expect(day.body.shifts).toEqual([{ punchIds: [expect.any(String)], inAt: new Date(Date.parse(started)).toISOString(), outAt: null, inProgress: true }]);
+  });
+
+  it("a manager's edit of the owner's shift becomes a request that manager cannot approve", async () => {
+    const r = await edit(manager.token, { uid: owner.uid, date: recent, inTime: "18:00", outTime: "23:00", reason: "x" });
+    expect(r.status).toBe(200);
+    expect(r.body.applied).toBe(false);
+    expect((await call(corrections.PATCH, { slug: "alpha", method: "PATCH", token: manager.token, body: { id: r.body.id, action: "approve" } })).body.error).toBe("cannot_approve_own");
+    expect((await call(corrections.PATCH, { slug: "alpha", method: "PATCH", token: admin.token, body: { id: r.body.id, action: "approve" } })).status).toBe(200);
+    expect(await live(owner.uid)).toEqual(["in 18:00", "out 23:00"]);
+  });
+
+  it("the owner edits their own shift directly", async () => {
+    const r = await edit(owner.token, { uid: owner.uid, date: recent, inTime: "18:00", outTime: "23:00", reason: "x" });
+    expect(r.body.applied).toBe(true);
+    expect(await live(owner.uid)).toEqual(["in 18:00", "out 23:00"]);
   });
 
   it("a request cannot be approved after a manager changed that day directly", async () => {

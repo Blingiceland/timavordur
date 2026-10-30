@@ -48,6 +48,12 @@ describe("shiftsOnDay — the recorded shifts a correction for a work day replac
     expect(shiftsOnDay(punches, "2026-10-10").map((s) => s.punchIds)).toEqual([["a", "b"]]);
   });
 
+  it("with the current time, a punch-in still within 16 hours is the shift being worked now", () => {
+    const punches = [p("a", "in", "2026-10-10T20:00:00Z")];
+    expect(shiftsOnDay(punches, "2026-10-10", undefined, at("2026-10-10T23:00:00Z"))).toEqual([{ punchIds: ["a"], inAt: at("2026-10-10T20:00:00Z"), outAt: null, inProgress: true }]);
+    expect(shiftsOnDay(punches, "2026-10-10", undefined, at("2026-10-11T13:00:00Z"))).toEqual([{ punchIds: ["a"], inAt: at("2026-10-10T20:00:00Z"), outAt: null }]);
+  });
+
   it("other days' shifts are left alone", () => {
     const punches = [p("a", "in", "2026-10-09T17:00:00Z"), p("b", "out", "2026-10-09T23:00:00Z"), p("c", "in", "2026-10-11T17:00:00Z"), p("d", "out", "2026-10-11T23:00:00Z")];
     expect(shiftsOnDay(punches, "2026-10-10", { from: at("2026-10-10T17:00:00Z"), to: at("2026-10-10T23:00:00Z") })).toEqual([]);

@@ -90,6 +90,7 @@ const ERRORS: Record<string, [string, string]> = {
   staff_not_found: ["Starfsmaður fannst ekki", "Employee not found"],
   replace_not_on_day: ["Vaktin er ekki á þessum degi — sæktu vaktirnar aftur", "That shift is not on this day — reload the shifts"],
   replace_partial_shift: ["Veldu alla vaktina, ekki hluta hennar", "Choose the whole shift, not part of it"],
+  correction_overlaps: ["Tímarnir passa ekki við skráðar stimplanir (skarast eða vantar par). Settu inn bæði inn- og út-tíma eða hakaðu við vaktina sem á að skipta út.", "The times don't fit the recorded punches (overlap or missing pair). Enter both times or tick the shift to replace."],
 };
 
 export function errText(code: unknown, lang: Lang, retryAfter?: number): string {

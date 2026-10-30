@@ -71,22 +71,27 @@ export interface DayShift {
   punchIds: string[];
   inAt: number | null;
   outAt: number | null;
+  /** Clocked in less than 16 hours ago and not out yet: being worked right now. */
+  inProgress?: true;
 }
 
 /**
  * The recorded shifts that belong to a work day — what a correction for that
  * day replaces. Shifts and lone punch-ins belong to the day they started; a lone
  * punch-out before noon ends the night before. With `span` (the corrected
- * times), anything overlapping it is included too.
+ * times), anything overlapping it is included too. Without `now`, an unclosed
+ * punch-in is always a lone punch.
  */
-export function shiftsOnDay(punches: PunchLite[], date: string, span?: { from: number; to: number }): DayShift[] {
-  // No "now": an unclosed punch-in is a lone punch, never an estimated shift.
-  const { shifts, issues } = pairPunches(punches, Number.MAX_SAFE_INTEGER);
+export function shiftsOnDay(punches: PunchLite[], date: string, span?: { from: number; to: number }, now = Number.MAX_SAFE_INTEGER): DayShift[] {
+  const { shifts, issues } = pairPunches(punches, now);
   const byId = new Map(punches.map((p) => [p.id, p]));
-  const all: DayShift[] = shifts.map((s) => ({ punchIds: s.punchIds, inAt: s.start, outAt: s.end }));
+  const all: DayShift[] = shifts.map((s) => (s.open
+    ? { punchIds: s.punchIds, inAt: s.start, outAt: null, inProgress: true as const }
+    : { punchIds: s.punchIds, inAt: s.start, outAt: s.end }));
   for (const i of issues) {
     const p = byId.get(i.punchIds?.[0] ?? "");
-    if (!p || i.code === "punch_shift_too_long") continue; // that one is a paired shift already
+    // These are paired (or in-progress) shifts already.
+    if (!p || i.code === "punch_shift_too_long" || i.code === "punch_open_estimate") continue;
     all.push(p.type === "in" ? { punchIds: [p.id], inAt: p.at, outAt: null } : { punchIds: [p.id], inAt: null, outAt: p.at });
   }
   return all

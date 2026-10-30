@@ -12,6 +12,8 @@ export interface DayShift {
   punchIds: string[];
   inAt: string | null;
   outAt: string | null;
+  /** Being worked right now: not ticked unless the approver chooses it. */
+  inProgress?: boolean;
 }
 
 export interface Correction {

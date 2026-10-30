@@ -67,11 +67,18 @@ fyrirtæki og ógildast við PIN-endurstillingu.
 
 Leiðrétting fyrir dag sem á þegar skráða vakt kemur í stað hennar: gömlu
 stimplanirnar eru merktar `supersededBy` (aldrei eytt) og launavinnslan sleppir
-þeim. Vakt dagsins er það sem hófst þann dag; stök útstimplun fyrir hádegi telst
-til nóttarinnar á undan. Sá sem samþykkir sér hvað verður skipt út og getur
-haldið vakt (t.d. tvær vaktir sama dag). Vaktstjóri getur líka breytt eða
-fjarlægt vakt annars starfsmanns beint; það gildir strax og fer í `auditLog`
-sem `punch.correction.direct`. Læst tímabil eru varin í báðum tilvikum.
+þeim. Reglurnar eru í `src/lib/payroll/corrections.ts`:
+
+- Vakt dagsins er það sem hófst þann dag; stök útstimplun fyrir hádegi telst til
+  nóttarinnar á undan. Vakt sem er í gangi núna er aldrei skipt út nema hún sé valin.
+- Báðir tímar: vaktinni er skipt út. Aðeins annar tíminn: sú hlið ein er leiðrétt
+  (út-tími lokar gleymdri útstimplun, líka eftir miðnætti; inn-tími færir byrjun).
+- Leiðrétting má ekki skilja eftir stimplun án pars (skörun er hafnað, `correction_overlaps`).
+- Sá sem samþykkir sér hvað verður skipt út og getur haldið vakt (t.d. tvær vaktir sama dag).
+- Vaktstjóri breytir eða fjarlægir vakt þeirra sem eru neðar í röðinni beint; það
+  gildir strax og fer í `auditLog` sem `punch.correction.direct`. Eigin vakt, vakt
+  jafningja eða yfirmanns verður að beiðni sem hvorki starfsmaðurinn né sá sem
+  sendi hana getur samþykkt (eigandi má). Læst tímabil eru varin í öllum tilvikum.
 
 ## Uppsetning (þróun)
 
