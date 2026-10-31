@@ -21,3 +21,12 @@ Almennt, skjalfest snið, ekki sniðið að tilteknu launakerfi. **Opið atriði
 | aaetlun | 1 ef áætlun (vakt í gangi eða drög) |
 | uppruni | Uppruni og auðkenni stimplana, aðgreind með `|` |
 | reiknivel | Útgáfa launavélar |
+
+## Tímaskýrsla í Excel (CSV)
+
+Hnappurinn „Sækja í Excel“ á tímaskýrslusíðunni. Þetta er ekki launaskjal, heldur yfirlit yfir unnar vaktir.
+
+- Slóð: `GET /api/{slug}/timesheets/export?period=YYYY-MM&uid=all|<uid>`. Starfsmaður fær aðeins sínar eigin vaktir; aðra eða alla (`all`) þarf admin/owner.
+- Sama kóðun og hér að ofan. Skráarnafn endar á `_DROG` ef tímabilið er ekki læst.
+- Ein lína á hverja vakt: `Nafn; Kennitala; Dagsetning; Vikudagur; Inn; Út; Klst; Athugasemd`, og síðan `SAMTALS`-lína á hvern starfsmann.
+- Vaktir eru settar saman úr launalínunum (`src/lib/payroll/timesheet-csv.ts`), svo klukkustundirnar eru alltaf þær sömu og í launaútreikningnum. Vakt sem nær yfir tímabilsmörk er klippt við mörkin, og vakt í gangi er merkt „Vakt í gangi (áætlun)“.

@@ -22,6 +22,7 @@ const T = {
     cols: ["Dags.", "Tími", "Liður", "Klst", "Taxti", "Upphæð", "Taxtaútgáfa"],
     orlof: "Orlof", pension: "Mótframlag lífeyris", funds: "Sjóðir", tg: "Tryggingagjald", total: "Samtals",
     preview: "Áætlun 2027 úr vaktaplani →", payroll: "Launavinnsla →", seed: "🧪 Mock gögn", seedDel: "🗑 Eyða mock",
+    excel: "Sækja í Excel", excelAll: "Sækja alla í Excel",
   },
   en: {
     title: "Timesheets", back: "← Back", allStaff: "All staff", loading: "Loading...", noData: "No records in this period",
@@ -33,6 +34,7 @@ const T = {
     cols: ["Date", "Time", "Item", "Hours", "Rate", "Amount", "Rate table"],
     orlof: "Holiday pay", pension: "Employer pension", funds: "Union funds", tg: "Social security tax", total: "Total",
     preview: "2027 estimate from schedule →", payroll: "Payroll →", seed: "🧪 Mock data", seedDel: "🗑 Delete mock",
+    excel: "Download for Excel", excelAll: "Download all for Excel",
   },
 };
 
@@ -107,6 +109,22 @@ export default function TimesheetsPage() {
     if (res.ok) fetchData();
   };
 
+  const downloadExcel = async () => {
+    if (!user) return;
+    setError("");
+    try {
+      const tok = await user.getIdToken();
+      const qs = isAdmin ? `&uid=${selectedUid}` : "";
+      const res = await fetch(`/api/${slug}/timesheets/export?period=${currentPeriodKey(offset)}${qs}`, { headers: { Authorization: `Bearer ${tok}` } });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); setError(`${d.error || res.status}`); return; }
+      const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1] || `timaskyrsla_${slug}.csv`;
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url; a.download = name; a.click();
+      URL.revokeObjectURL(url);
+    } catch { setError(lang === "is" ? "Netvilla" : "Network error"); }
+  };
+
   if (!user) return <div style={{ padding: 40, textAlign: "center" }}>{t.loading}</div>;
   const periodLabel = data
     ? `${new Date(data.period.start).toLocaleDateString(lang === "is" ? "is-IS" : "en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} – ${new Date(data.period.endDateInclusive + "T00:00:00Z").toLocaleDateString(lang === "is" ? "is-IS" : "en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" })}`
@@ -156,6 +174,7 @@ export default function TimesheetsPage() {
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 16 }}>
               <span className="badge" style={{ color: data.periodStatus === "locked" ? "var(--accent)" : "#f0a500" }}>{t.period[data.periodStatus]}</span>
               {data.fromSnapshot && <span className="text-muted" style={{ fontSize: "0.82rem" }}>{t.snapshot}</span>}
+              {data.summaries.length > 0 && <button className="btn btn--secondary btn--sm" onClick={downloadExcel}>{isAdmin && selectedUid === "all" ? t.excelAll : t.excel}</button>}
               {isAdmin && <span style={{ marginLeft: "auto", fontWeight: 600 }}>{t.gross}: {kr(data.totalGrossCents)}{data.totalCostCents !== null && ` · ${t.cost}: ${kr(data.totalCostCents)}`}</span>}
             </div>
             {data.summaries.length === 0 && <div className="card" style={{ textAlign: "center", color: "var(--text-muted)" }}>{t.noData}</div>}

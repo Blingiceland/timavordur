@@ -7,6 +7,7 @@ import * as register from "@/app/api/[slug]/staff/register/route";
 import * as schedule from "@/app/api/[slug]/schedule/route";
 import * as templates from "@/app/api/[slug]/shift-templates/route";
 import * as timesheets from "@/app/api/[slug]/timesheets/route";
+import * as timesheetExport from "@/app/api/[slug]/timesheets/export/route";
 import * as settings from "@/app/api/[slug]/admin/settings/route";
 import * as corrections from "@/app/api/[slug]/corrections/route";
 import * as swaps from "@/app/api/[slug]/swaps/route";
@@ -456,6 +457,29 @@ describe("corrections replace the day's recorded shift", () => {
     expect((await edit(manager.token, { uid: staff.uid, date: recent, replaces: [stray] })).status).toBe(200);
     const r = await call(corrections.PATCH, { slug: "alpha", method: "PATCH", token: owner.token, body: { id: c.body.id, action: "approve" } });
     expect(r.status).toBe(409); expect(r.body.error).toBe("punches_changed_since_request");
+  });
+});
+
+describe("timesheet export (Excel)", () => {
+  it("staff export only their own shifts; admin exports everyone; others are refused", async () => {
+    await seedPunch(A, staff.uid, "in", `${dayIn(2)}T22:00:00Z`); await seedPunch(A, staff.uid, "out", `${dayIn(3)}T06:00:00Z`);
+    await seedPunch(A, manager.uid, "in", `${dayIn(4)}T10:00:00Z`); await seedPunch(A, manager.uid, "out", `${dayIn(4)}T14:30:00Z`);
+    const exp = (token: string, query: string) => call(timesheetExport.GET, { slug: "alpha", path: "timesheets/export", token, query: `period=${LAST}&${query}` });
+
+    const own = await exp(staff.token, "");
+    expect(own.status).toBe(200);
+    expect(own.text).toContain(`${staff.uid};;${dayIn(2)};`);
+    expect(own.text).toContain(";22:00;06:00;8,00;");
+    expect(own.text).not.toContain(manager.uid);
+
+    expect((await exp(staff.token, "uid=all")).status).toBe(403);
+    expect((await exp(manager.token, `uid=${staff.uid}`)).status).toBe(403);
+    expect((await exp(outsider.token, "uid=all")).status).toBe(403);
+
+    const all = await exp(admin.token, "uid=all");
+    expect(all.status).toBe(200);
+    expect(all.text).toContain(";10:00;14:30;4,50;");
+    expect(all.text.split("\r\n").filter((l) => l.includes(";SAMTALS;")).length).toBeGreaterThanOrEqual(2);
   });
 });
 
